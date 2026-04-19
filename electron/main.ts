@@ -1,8 +1,11 @@
-import { app, BrowserWindow } from 'electron'
-import { join } from 'path'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import { readFile, writeFile, mkdir } from 'fs/promises'
+import { homedir } from 'os'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
+const ESP_AI_HOME = join(homedir(), '.esp-ai')
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -22,6 +25,25 @@ function createWindow() {
     win.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
+
+ipcMain.handle('pickGlb', async () => {
+  const r = await dialog.showOpenDialog({
+    title: 'Select a .glb model',
+    filters: [{ name: '3D Model', extensions: ['glb', 'gltf'] }],
+    properties: ['openFile']
+  })
+  if (r.canceled || !r.filePaths[0]) return null
+  const data = await readFile(r.filePaths[0])
+  return { path: r.filePaths[0], data: new Uint8Array(data) }
+})
+
+ipcMain.handle('writeJson', async (_e, filename: string, content: string) => {
+  const dir = join(ESP_AI_HOME, 'catalog-drafts')
+  await mkdir(dir, { recursive: true })
+  const out = join(dir, filename)
+  await writeFile(out, content, 'utf8')
+  return out
+})
 
 app.whenReady().then(createWindow)
 
