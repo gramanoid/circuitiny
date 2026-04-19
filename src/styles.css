@@ -1,0 +1,42 @@
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; background: #1a1a1a; color: #ddd; }
+
+.app {
+  display: grid;
+  grid-template-columns: 1fr 1fr 360px;
+  grid-template-rows: 1fr 1fr 220px;
+  grid-template-areas:
+    "viewer schematic chat"
+    "viewer schematic chat"
+    "code   code      chat";
+  gap: 1px;
+  background: #000;
+  height: 100vh;
+}
+
+.pane {
+  background: #1a1a1a;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pane > header {
+  padding: 6px 10px;
+  background: #252525;
+  border-bottom: 1px solid #333;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+}
+.pane > .body { flex: 1; overflow: auto; padding: 10px; }
+
+.viewer    { grid-area: viewer; }
+.schematic { grid-area: schematic; }
+.code      { grid-area: code; font-family: 'SF Mono', Menlo, monospace; }
+.chat      { grid-area: chat; border-left: 1px solid #333; }

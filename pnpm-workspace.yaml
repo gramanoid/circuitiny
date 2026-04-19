@@ -1,0 +1,3 @@
+allowBuilds:
+  '[': false
+  ']': false
