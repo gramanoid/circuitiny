@@ -1,16 +1,30 @@
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, Grid, Environment, Html, useGLTF } from '@react-three/drei'
-import { Suspense, useMemo } from 'react'
+import { Suspense, useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import { useStore } from '../store'
 import { pinColor } from '../catalog'
 
-function GlbModel({ url, onPick }: { url: string; onPick: (p: THREE.Vector3, n: THREE.Vector3) => void }) {
+function GlbModel({ url, scale, onPick, onAutoScale }: {
+  url: string
+  scale: number
+  onPick: (p: THREE.Vector3, n: THREE.Vector3) => void
+  onAutoScale: (suggested: number) => void
+}) {
   const gltf = useGLTF(url)
   const scene = useMemo(() => gltf.scene.clone(true), [gltf])
-
+  useEffect(() => {
+    const box = new THREE.Box3().setFromObject(scene)
+    const max = Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z)
+    // assume target board ~0.05m. Suggest scale that brings maxDim close to that.
+    let s = 1
+    if (max > 0.5) s = 0.001       // model in mm
+    else if (max > 0.05) s = 0.01  // model in cm
+    onAutoScale(s)
+  }, [scene, onAutoScale])
   return (
     <group
+      scale={[scale, scale, scale]}
       onClick={(e: ThreeEvent<MouseEvent>) => {
         if (!e.face) return
         e.stopPropagation()
@@ -33,11 +47,10 @@ function DraftPinAnchors() {
         const isSel = sel === p.id
         return (
           <group key={p.id} position={p.position}>
-            <mesh
-              onClick={(e) => { e.stopPropagation(); selectPin(p.id) }}
-            >
+            <mesh onClick={(e) => { e.stopPropagation(); selectPin(p.id) }}>
               <sphereGeometry args={[isSel ? 0.0015 : 0.001, 12, 12]} />
-              <meshStandardMaterial color={pinColor(p.type)} emissive={pinColor(p.type)} emissiveIntensity={isSel ? 0.7 : 0.2} />
+              <meshStandardMaterial color={pinColor(p.type)} emissive={pinColor(p.type)}
+                                    emissiveIntensity={isSel ? 0.7 : 0.2} />
             </mesh>
             <Html distanceFactor={0.1} style={{ pointerEvents: 'none' }}>
               <div style={{ background: '#222', color: '#eee', padding: '1px 4px',
@@ -55,6 +68,7 @@ function DraftPinAnchors() {
 export default function CatalogEditor3D() {
   const draft = useStore((s) => s.draft)
   const addPin = useStore((s) => s.addDraftPin)
+  const setMeta = useStore((s) => s.setDraftMeta)
 
   const url = useMemo(() => {
     if (!draft.glbData) return null
@@ -81,7 +95,9 @@ export default function CatalogEditor3D() {
               cellColor="#333" sectionColor="#555" fadeDistance={0.5} infiniteGrid />
         <GlbModel
           url={url}
+          scale={draft.scale}
           onPick={(p, n) => addPin([p.x, p.y, p.z], [n.x, n.y, n.z])}
+          onAutoScale={(s) => { if (draft.pins.length === 0 && draft.scale === 1) setMeta({ scale: s }) }}
         />
         <DraftPinAnchors />
         <OrbitControls makeDefault target={[0, 0, 0]} />

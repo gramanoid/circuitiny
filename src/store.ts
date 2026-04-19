@@ -1,22 +1,26 @@
 import { create } from 'zustand'
-import { type Project, emptyProject } from './project/schema'
+import { type Project, emptyProject, type PinType } from './project/schema'
 
 export type Mode = 'project' | 'catalog-editor'
 
 export interface DraftPin {
   id: string
   label: string
-  type: import('./project/schema').PinType
-  position: [number, number, number]
+  type: PinType
+  position: [number, number, number]   // world coords (meters), captured post-scale
   normal: [number, number, number]
 }
+
+export type Category = 'sensor' | 'actuator' | 'display' | 'input' | 'power' | 'misc'
 
 export interface CatalogDraft {
   id: string
   name: string
-  category: 'sensor' | 'actuator' | 'display' | 'input' | 'power' | 'misc'
+  category: Category
   glbPath: string | null
-  glbData: Uint8Array | null      // bytes from preload (rendered via blob URL)
+  glbName: string | null
+  glbData: Uint8Array | null
+  scale: number                         // applied to model and pin coords
   pins: DraftPin[]
   selectedPin: string | null
 }
@@ -26,13 +30,14 @@ interface State {
   project: Project
   selected: string | null
   draft: CatalogDraft
+
   setMode: (m: Mode) => void
   setProject: (p: Project) => void
   select: (instance: string | null) => void
 
-  // catalog draft mutators
-  loadDraftGlb: (path: string, data: Uint8Array) => void
-  setDraftMeta: (patch: Partial<Pick<CatalogDraft, 'id' | 'name' | 'category'>>) => void
+  loadDraftGlb: (path: string, name: string, data: Uint8Array, suggestedScale?: number) => void
+  setDraftMeta: (patch: Partial<Pick<CatalogDraft, 'id' | 'name' | 'category' | 'scale'>>) => void
+  loadDraftFromBundle: (d: Partial<CatalogDraft>) => void
   addDraftPin: (position: [number, number, number], normal: [number, number, number]) => void
   updateDraftPin: (id: string, patch: Partial<DraftPin>) => void
   removeDraftPin: (id: string) => void
@@ -42,7 +47,8 @@ interface State {
 
 const newDraft = (): CatalogDraft => ({
   id: '', name: '', category: 'sensor',
-  glbPath: null, glbData: null, pins: [], selectedPin: null
+  glbPath: null, glbName: null, glbData: null,
+  scale: 1, pins: [], selectedPin: null
 })
 
 export const useStore = create<State>((set) => ({
@@ -55,10 +61,11 @@ export const useStore = create<State>((set) => ({
   setProject: (project) => set({ project }),
   select: (selected) => set({ selected }),
 
-  loadDraftGlb: (glbPath, glbData) =>
-    set((s) => ({ draft: { ...s.draft, glbPath, glbData } })),
-  setDraftMeta: (patch) =>
-    set((s) => ({ draft: { ...s.draft, ...patch } })),
+  loadDraftGlb: (glbPath, glbName, glbData, suggestedScale) =>
+    set((s) => ({ draft: { ...s.draft, glbPath, glbName, glbData,
+                           scale: suggestedScale ?? s.draft.scale } })),
+  setDraftMeta: (patch) => set((s) => ({ draft: { ...s.draft, ...patch } })),
+  loadDraftFromBundle: (d) => set((s) => ({ draft: { ...newDraft(), ...d } })),
   addDraftPin: (position, normal) =>
     set((s) => {
       const id = `pin${s.draft.pins.length + 1}`

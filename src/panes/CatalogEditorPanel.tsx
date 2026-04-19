@@ -1,4 +1,4 @@
-import { useStore, type DraftPin } from '../store'
+import { useStore, type DraftPin, type Category } from '../store'
 import type { PinType } from '../project/schema'
 
 const PIN_TYPES: PinType[] = [
@@ -10,10 +10,13 @@ const PIN_TYPES: PinType[] = [
   'uart_tx', 'uart_rx', 'pwm', 'nc'
 ]
 
+const CATEGORIES: Category[] = ['sensor', 'actuator', 'display', 'input', 'power', 'misc']
+
 export default function CatalogEditorPanel() {
   const draft = useStore((s) => s.draft)
   const setMeta = useStore((s) => s.setDraftMeta)
   const loadGlb = useStore((s) => s.loadDraftGlb)
+  const loadBundle = useStore((s) => s.loadDraftFromBundle)
   const updatePin = useStore((s) => s.updateDraftPin)
   const removePin = useStore((s) => s.removeDraftPin)
   const selectPin = useStore((s) => s.selectDraftPin)
@@ -21,27 +24,61 @@ export default function CatalogEditorPanel() {
 
   async function pick() {
     const r = await window.espAI.pickGlb()
-    if (r) loadGlb(r.path, r.data)
+    if (!r) return
+    const name = r.path.split('/').pop() ?? 'model.glb'
+    loadGlb(r.path, name, r.data)
   }
 
-  async function exportJson() {
+  async function loadExisting() {
+    const r = await window.espAI.pickComponent()
+    if (!r) return
+    try {
+      const j = JSON.parse(r.json)
+      loadBundle({
+        id: j.id ?? '',
+        name: j.name ?? '',
+        category: (j.category as Category) ?? 'misc',
+        glbPath: r.glbName ?? null,
+        glbName: r.glbName,
+        glbData: r.glbData,
+        scale: typeof j.scale === 'number' ? j.scale : 1,
+        pins: Array.isArray(j.pins) ? j.pins.map((p: any): DraftPin => ({
+          id: p.id, label: p.label ?? p.id,
+          type: p.type ?? 'digital_io',
+          position: p.position, normal: p.normal ?? [0, 1, 0]
+        })) : [],
+        selectedPin: null
+      })
+    } catch (e) { alert('Failed to parse component.json: ' + e) }
+  }
+
+  async function exportBundle() {
     if (!draft.id) { alert('Set an id first'); return }
+    if (!draft.glbData || !draft.glbName) { alert('Load a .glb first'); return }
     const out = {
       id: draft.id,
       name: draft.name || draft.id,
       version: '0.1.0',
       category: draft.category,
-      model: draft.glbPath?.split('/').pop() ?? 'model.glb',
+      model: draft.glbName,
+      scale: draft.scale,
       pins: draft.pins.map(({ id, label, type, position, normal }) => ({
         id, label, type, position, normal
       }))
     }
-    const path = await window.espAI.writeJson(`${draft.id}.component.json`, JSON.stringify(out, null, 2))
-    alert(`Saved to ${path}`)
+    const dir = await window.espAI.writeBundle(
+      draft.id, draft.glbName, draft.glbData, JSON.stringify(out, null, 2)
+    )
+    alert(`Saved bundle to ${dir}`)
   }
 
   return (
     <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
+      <section style={{ display: 'flex', gap: 6 }}>
+        <button onClick={loadExisting} style={{ ...btnStyle, flex: 1 }}>📂 Open existing</button>
+        <button onClick={reset} style={{ ...btnStyle, background: '#3a2222' }}>New</button>
+      </section>
+
       <section>
         <Field label="ID">
           <input value={draft.id} onChange={(e) => setMeta({ id: e.target.value })}
@@ -52,15 +89,22 @@ export default function CatalogEditorPanel() {
                  placeholder="ESP32 DevKitC v4" style={inputStyle} />
         </Field>
         <Field label="Category">
-          <select value={draft.category} onChange={(e) => setMeta({ category: e.target.value as DraftPin['type'] extends never ? never : 'sensor' })} style={inputStyle}>
-            {['sensor','actuator','display','input','power','misc'].map(c => <option key={c} value={c}>{c}</option>)}
+          <select value={draft.category}
+                  onChange={(e) => setMeta({ category: e.target.value as Category })}
+                  style={inputStyle}>
+            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
+        </Field>
+        <Field label={`Scale (model units → meters) — auto-detected`}>
+          <input type="number" step="0.001" value={draft.scale}
+                 onChange={(e) => setMeta({ scale: parseFloat(e.target.value) || 1 })}
+                 style={inputStyle} />
         </Field>
       </section>
 
       <section>
-        <button onClick={pick} style={btnStyle}>{draft.glbPath ? '↻ Replace .glb' : '⤓ Load .glb'}</button>
-        {draft.glbPath && <div style={{ fontSize: 10, color: '#888', marginTop: 4, wordBreak: 'break-all' }}>{draft.glbPath}</div>}
+        <button onClick={pick} style={btnStyle}>{draft.glbName ? '↻ Replace .glb' : '⤓ Load .glb'}</button>
+        {draft.glbName && <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>{draft.glbName}</div>}
       </section>
 
       <section style={{ flex: 1, overflow: 'auto' }}>
@@ -76,9 +120,10 @@ export default function CatalogEditorPanel() {
         ))}
       </section>
 
-      <section style={{ display: 'flex', gap: 6 }}>
-        <button onClick={exportJson} style={{ ...btnStyle, flex: 1 }}>Export component.json</button>
-        <button onClick={reset} style={{ ...btnStyle, background: '#3a2222' }}>Reset</button>
+      <section>
+        <button onClick={exportBundle} style={{ ...btnStyle, width: '100%' }}>
+          💾 Export bundle (.glb + .json)
+        </button>
       </section>
     </div>
   )
