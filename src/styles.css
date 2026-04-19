@@ -34,7 +34,8 @@ html, body, #root { height: 100%; margin: 0; background: #1a1a1a; color: #ddd; }
   letter-spacing: 0.05em;
   color: #888;
 }
-.pane > .body { flex: 1; overflow: auto; padding: 10px; }
+.pane > .body { flex: 1; overflow: auto; padding: 10px; position: relative; }
+.pane.viewer > .body, .pane.schematic > .body { padding: 0; overflow: hidden; }
 
 .viewer    { grid-area: viewer; }
 .schematic { grid-area: schematic; }
