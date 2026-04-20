@@ -6,7 +6,9 @@ const api = {
   pickComponent: (): Promise<{ jsonPath: string; json: string; glbData: Uint8Array | null; glbName: string | null } | null> =>
     ipcRenderer.invoke('pickComponent'),
   writeBundle: (id: string, glbName: string, glbData: Uint8Array, jsonText: string): Promise<string> =>
-    ipcRenderer.invoke('writeBundle', id, glbName, glbData, jsonText)
+    ipcRenderer.invoke('writeBundle', id, glbName, glbData, jsonText),
+  listCatalog: (): Promise<Array<{ id: string; json: any; glbData: Uint8Array | null }>> =>
+    ipcRenderer.invoke('listCatalog')
 }
 
 contextBridge.exposeInMainWorld('espAI', api)

@@ -8,16 +8,17 @@ html, body, #root { height: 100%; margin: 0; background: #1a1a1a; color: #ddd; }
 
 .app {
   display: grid;
-  grid-template-columns: 1fr 1fr 360px;
+  grid-template-columns: 220px 1fr 1fr 360px;
   grid-template-rows: 1fr 1fr 220px;
   grid-template-areas:
-    "viewer schematic chat"
-    "viewer schematic chat"
-    "code   code      chat";
+    "palette viewer schematic chat"
+    "palette viewer schematic chat"
+    "palette code   code      chat";
   gap: 1px;
   background: #000;
-  height: 100vh;
+  height: 100%;
 }
+.palette   { grid-area: palette; border-right: 1px solid #222; }
 
 .pane {
   background: #1a1a1a;

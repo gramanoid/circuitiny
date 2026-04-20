@@ -31,7 +31,8 @@ interface State {
   mode: Mode
   project: Project
   selected: string | null
-  pendingPin: PinRef | null    // first end of a wire being drawn
+  pendingPin: PinRef | null
+  catalogVersion: number        // bumped when catalog registers new entries — drives re-render
   draft: CatalogDraft
 
   setMode: (m: Mode) => void
@@ -41,6 +42,10 @@ interface State {
   clickPin: (ref: PinRef) => void
   cancelWire: () => void
   removeNet: (id: string) => void
+
+  addComponent: (componentId: string) => void
+  removeComponent: (instance: string) => void
+  bumpCatalog: () => void
 
   loadDraftGlb: (path: string, name: string, data: Uint8Array, suggestedScale?: number) => void
   setDraftMeta: (patch: Partial<Pick<CatalogDraft, 'id' | 'name' | 'category' | 'scale'>>) => void
@@ -63,6 +68,7 @@ export const useStore = create<State>((set) => ({
   project: seed(),
   selected: null,
   pendingPin: null,
+  catalogVersion: 0,
   draft: newDraft(),
 
   setMode: (mode) => set({ mode }),
@@ -93,6 +99,34 @@ export const useStore = create<State>((set) => ({
   removeNet: (id) => set((s) => ({
     project: { ...s.project, nets: s.project.nets.filter((n) => n.id !== id) }
   })),
+
+  addComponent: (componentId) => set((s) => {
+    const existing = s.project.components.filter((c) => c.componentId === componentId).length
+    const base = componentId.split('-')[0].replace(/[^a-z0-9]/gi, '')
+    let n = existing + 1
+    const names = new Set(s.project.components.map((c) => c.instance))
+    let instance = `${base}${n}`
+    while (names.has(instance)) { n++; instance = `${base}${n}` }
+    // scatter new components in a line to the right of the board
+    const x = 0.04 + (existing * 0.01)
+    return {
+      project: { ...s.project, components: [...s.project.components, {
+        instance, componentId, position: [x, 0.005, 0.02], pinAssignments: {}
+      }]},
+      selected: instance
+    }
+  }),
+  removeComponent: (instance) => set((s) => ({
+    project: {
+      ...s.project,
+      components: s.project.components.filter((c) => c.instance !== instance),
+      nets: s.project.nets
+        .map((n) => ({ ...n, endpoints: n.endpoints.filter((e) => !e.startsWith(`${instance}.`)) }))
+        .filter((n) => n.endpoints.length >= 1)
+    },
+    selected: s.selected === instance ? null : s.selected
+  })),
+  bumpCatalog: () => set((s) => ({ catalogVersion: s.catalogVersion + 1 })),
 
   loadDraftGlb: (glbPath, glbName, glbData, suggestedScale) =>
     set((s) => ({ draft: { ...s.draft, glbPath, glbName, glbData,

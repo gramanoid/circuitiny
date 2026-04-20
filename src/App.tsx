@@ -1,14 +1,22 @@
+import { useEffect } from 'react'
 import Viewer3D from './panes/Viewer3D'
 import Schematic from './panes/Schematic'
 import CodePane from './panes/CodePane'
 import ChatPane from './panes/ChatPane'
 import CatalogEditor3D from './panes/CatalogEditor3D'
 import CatalogEditorPanel from './panes/CatalogEditorPanel'
+import Palette from './panes/Palette'
 import { useStore } from './store'
+import { hydrateCatalog } from './catalog/hydrate'
 
 export default function App() {
   const mode = useStore((s) => s.mode)
   const setMode = useStore((s) => s.setMode)
+  const bump = useStore((s) => s.bumpCatalog)
+
+  useEffect(() => {
+    hydrateCatalog().then((n) => { if (n > 0) bump() }).catch(() => { /* ignore */ })
+  }, [bump])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -27,7 +35,11 @@ export default function App() {
 
 function ProjectMode() {
   return (
-    <div className="app">
+    <div className="app project-mode">
+      <section className="pane palette">
+        <header>Palette</header>
+        <div className="body" style={{ padding: 0 }}><Palette /></div>
+      </section>
       <section className="pane viewer">
         <header>3D Viewer</header>
         <div className="body"><Viewer3D /></div>

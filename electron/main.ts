@@ -71,6 +71,27 @@ ipcMain.handle('pickComponent', async () => {
   return { jsonPath, json, glbData, glbName }
 })
 
+ipcMain.handle('listCatalog', async () => {
+  const root = join(ESP_AI_HOME, 'catalog')
+  if (!existsSync(root)) return []
+  const dirs = await readdir(root, { withFileTypes: true })
+  const out: Array<{ id: string; json: any; glbData: Uint8Array | null }> = []
+  for (const d of dirs) {
+    if (!d.isDirectory()) continue
+    const jsonPath = join(root, d.name, 'component.json')
+    if (!existsSync(jsonPath)) continue
+    try {
+      const json = JSON.parse(await readFile(jsonPath, 'utf8'))
+      let glbData: Uint8Array | null = null
+      if (json.model && existsSync(join(root, d.name, json.model))) {
+        glbData = new Uint8Array(await readFile(join(root, d.name, json.model)))
+      }
+      out.push({ id: json.id ?? d.name, json, glbData })
+    } catch { /* skip bad entry */ }
+  }
+  return out
+})
+
 ipcMain.handle('writeBundle', async (_e, id: string, glbName: string, glbData: Uint8Array, jsonText: string) => {
   if (!id) throw new Error('id is required')
   const dir = join(ESP_AI_HOME, 'catalog', id)

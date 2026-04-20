@@ -83,12 +83,21 @@ const devkitc: BoardDef = {
 
 const components: Record<string, ComponentDef> = { [ledRed.id]: ledRed }
 const boards: Record<string, BoardDef> = { [devkitc.id]: devkitc }
+const glbBlobs: Record<string, string> = {}   // componentId -> blob URL
 
 export const catalog = {
   getComponent: (id: string): ComponentDef | undefined => components[id],
   getBoard: (id: string): BoardDef | undefined => boards[id],
+  getGlbUrl: (id: string): string | undefined => glbBlobs[id],
   listComponents: (): ComponentDef[] => Object.values(components),
-  listBoards: (): BoardDef[] => Object.values(boards)
+  listBoards: (): BoardDef[] => Object.values(boards),
+  registerComponent: (def: ComponentDef, glbData?: Uint8Array | null) => {
+    components[def.id] = def
+    if (glbData) {
+      const buf = glbData.slice().buffer as ArrayBuffer
+      glbBlobs[def.id] = URL.createObjectURL(new Blob([buf], { type: 'model/gltf-binary' }))
+    }
+  }
 }
 
 // Color a pin anchor by its electrical role.
