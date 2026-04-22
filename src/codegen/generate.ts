@@ -1,8 +1,9 @@
 // Template assembly — produces main.c, CMakeLists.txt, sdkconfig.defaults from the IR.
 // Deterministic output (stable ordering, no timestamps) so regeneration is idempotent.
 
-import type { Project } from '../project/schema'
+import type { Project, Behavior, Action } from '../project/schema'
 import { buildIr, type Ir } from './ir'
+import { catalog } from '../catalog'
 
 export interface GeneratedFiles {
   'main/app_main.c': string
@@ -37,6 +38,22 @@ export function generate(project: Project): { files: GeneratedFiles; ir: Ir } {
 
   const i2cInit = ir.buses.filter((b) => b.kind === 'i2c').map(emitI2cInit)
 
+  // Resolve behavior targets and emit per-behavior tasks / boot hooks.
+  const pinResolver = buildPinResolver(project)
+  const bootActions: string[] = []
+  const behaviorTasks: string[] = []
+  const behaviorLaunchers: string[] = []
+  for (const beh of project.behaviors) {
+    if (beh.trigger.type === 'boot') {
+      bootActions.push(`// behavior ${beh.id}`)
+      bootActions.push(...emitActions(beh.actions, pinResolver))
+    } else if (beh.trigger.type === 'timer') {
+      behaviorTasks.push(emitTimerTask(beh, pinResolver))
+      behaviorLaunchers.push(`xTaskCreate(beh_${sanitize(beh.id)}_task, "${sanitize(beh.id)}", 3072, NULL, 5, NULL);`)
+    }
+    // other triggers: ignored in v0 codegen
+  }
+
   const mainC = [
     HEADER,
     includeBlock,
@@ -45,6 +62,7 @@ export function generate(project: Project): { files: GeneratedFiles; ir: Ir } {
     '',
     ...(pinDefines.length ? [pinDefines.join('\n'), ''] : []),
     ...i2cInit,
+    ...behaviorTasks,
     `void app_main(void)`,
     `{`,
     `    ESP_ERROR_CHECK(nvs_flash_init());`,
@@ -52,7 +70,8 @@ export function generate(project: Project): { files: GeneratedFiles; ir: Ir } {
     ...initLines.map((l) => `    ${l}`),
     ...(ir.app.wifi ? ['    // TODO: wifi_init_sta() — credentials from NVS'] : []),
     ...(ir.app.mqtt ? ['    // TODO: mqtt_app_start()'] : []),
-    `    // Behaviors will be emitted here in M7.`,
+    ...bootActions.map((l) => `    ${l}`),
+    ...behaviorLaunchers.map((l) => `    ${l}`),
     `}`,
     ''
   ].filter((s) => s !== null).join('\n')
@@ -129,3 +148,81 @@ function emitI2cInit(b: { id: string; pins: Record<string, string | null> }): st
 
 function upperSnake(s: string) { return s.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase() }
 function quoted(s: string) { return s.startsWith('"') || s.startsWith('<') ? s : `"${s}"` }
+function sanitize(s: string) { return s.replace(/[^a-zA-Z0-9_]/g, '_') }
+
+// Resolve "instance.pin" (or "board.pinId") to the PIN_* macro used in the emitted C.
+type PinResolver = (target: string) => string | null
+
+function buildPinResolver(project: Project): PinResolver {
+  const board = catalog.getBoard(project.board)
+  return (target) => {
+    if (!target.includes('.')) return null
+    const [owner, pinId] = target.split('.')
+    if (owner === 'board') {
+      if (!board) return null
+      const p = board.pins.find((x) => x.id === pinId)
+      if (!p || !/^\d+$/.test(p.label)) return null
+      return p.label
+    }
+    const inst = project.components.find((c) => c.instance === owner)
+    if (!inst) return null
+    return `PIN_${upperSnake(owner)}_${upperSnake(pinId)}`
+  }
+}
+
+function emitActions(actions: Action[], resolve: PinResolver): string[] {
+  const out: string[] = []
+  for (const a of actions) {
+    switch (a.type) {
+      case 'set_output': {
+        const pin = resolve(a.target)
+        if (!pin) { out.push(`// skip set_output: unresolved ${a.target}`); break }
+        out.push(`gpio_set_level(${pin}, ${a.value === 'on' ? 1 : 0});`)
+        break
+      }
+      case 'toggle': {
+        const pin = resolve(a.target)
+        if (!pin) { out.push(`// skip toggle: unresolved ${a.target}`); break }
+        const stateVar = `s_${sanitize(a.target)}`
+        out.push(`static int ${stateVar} = 0; ${stateVar} ^= 1; gpio_set_level(${pin}, ${stateVar});`)
+        break
+      }
+      case 'log': {
+        const macro = a.level === 'warn' ? 'ESP_LOGW' : a.level === 'error' ? 'ESP_LOGE' : 'ESP_LOGI'
+        out.push(`${macro}(TAG, "${escapeC(a.message)}");`)
+        break
+      }
+      case 'delay':
+        out.push(`vTaskDelay(pdMS_TO_TICKS(${a.ms | 0}));`)
+        break
+      case 'sequence':
+        out.push(...emitActions(a.actions, resolve))
+        break
+      default:
+        out.push(`// unsupported action: ${a.type}`)
+    }
+  }
+  return out
+}
+
+function emitTimerTask(beh: Behavior, resolve: PinResolver): string {
+  if (beh.trigger.type !== 'timer') return ''
+  const period = Math.max(1, beh.trigger.period_ms | 0)
+  const name = sanitize(beh.id)
+  const body = emitActions(beh.actions, resolve).map((l) => `        ${l}`).join('\n')
+  return [
+    `static void beh_${name}_task(void *arg)`,
+    `{`,
+    `    TickType_t last = xTaskGetTickCount();`,
+    `    for (;;) {`,
+    `        vTaskDelayUntil(&last, pdMS_TO_TICKS(${period}));`,
+    body || '        // no actions',
+    `    }`,
+    `}`,
+    ''
+  ].join('\n')
+}
+
+function escapeC(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')
+}

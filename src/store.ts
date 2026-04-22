@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { type Project, emptyProject, type PinType } from './project/schema'
+import { type Project, emptyProject, type PinType, type Behavior } from './project/schema'
 
 export type Mode = 'project' | 'catalog-editor'
 
@@ -33,6 +33,11 @@ interface State {
   selected: string | null
   pendingPin: PinRef | null
   catalogVersion: number        // bumped when catalog registers new entries — drives re-render
+  simulating: boolean
+  simPhase: 0 | 1               // ticks at ~1 Hz while simulating (kept for legacy visuals)
+  simTime: number               // elapsed simulated milliseconds
+  simGpios: Record<string, boolean>  // GPIO label -> output state (board-pin label, e.g. "2", "16")
+  simLog: string[]              // most recent simulation log lines
   draft: CatalogDraft
 
   setMode: (m: Mode) => void
@@ -42,10 +47,19 @@ interface State {
   clickPin: (ref: PinRef) => void
   cancelWire: () => void
   removeNet: (id: string) => void
+  rewireBoardPin: (netId: string, toBoardPinId: string) => void
 
   addComponent: (componentId: string) => void
   removeComponent: (instance: string) => void
+  moveComponent: (instance: string, position: [number, number, number]) => void
   bumpCatalog: () => void
+  setSimulating: (b: boolean) => void
+  tickSim: () => void
+  simStep: (dtMs: number, gpios: Record<string, boolean>, logs: string[]) => void
+
+  addBehavior: () => string
+  removeBehavior: (id: string) => void
+  updateBehavior: (id: string, patch: Partial<Behavior>) => void
 
   loadDraftGlb: (path: string, name: string, data: Uint8Array, suggestedScale?: number) => void
   setDraftMeta: (patch: Partial<Pick<CatalogDraft, 'id' | 'name' | 'category' | 'scale'>>) => void
@@ -69,6 +83,11 @@ export const useStore = create<State>((set) => ({
   selected: null,
   pendingPin: null,
   catalogVersion: 0,
+  simulating: false,
+  simPhase: 0,
+  simTime: 0,
+  simGpios: {},
+  simLog: [],
   draft: newDraft(),
 
   setMode: (mode) => set({ mode }),
@@ -99,6 +118,15 @@ export const useStore = create<State>((set) => ({
   removeNet: (id) => set((s) => ({
     project: { ...s.project, nets: s.project.nets.filter((n) => n.id !== id) }
   })),
+  rewireBoardPin: (netId, toBoardPinId) => set((s) => ({
+    project: {
+      ...s.project,
+      nets: s.project.nets.map((n) => n.id !== netId ? n : {
+        ...n,
+        endpoints: n.endpoints.map((e) => e.startsWith('board.') ? `board.${toBoardPinId}` : e)
+      })
+    }
+  })),
 
   addComponent: (componentId) => set((s) => {
     const existing = s.project.components.filter((c) => c.componentId === componentId).length
@@ -126,7 +154,47 @@ export const useStore = create<State>((set) => ({
     },
     selected: s.selected === instance ? null : s.selected
   })),
+  moveComponent: (instance, position) => set((s) => ({
+    project: {
+      ...s.project,
+      components: s.project.components.map((c) =>
+        c.instance === instance ? { ...c, position } : c)
+    }
+  })),
   bumpCatalog: () => set((s) => ({ catalogVersion: s.catalogVersion + 1 })),
+  setSimulating: (b) => set({
+    simulating: b, simPhase: 0,
+    simTime: 0, simGpios: {}, simLog: b ? ['[sim] start'] : []
+  }),
+  tickSim: () => set((s) => ({ simPhase: s.simPhase === 0 ? 1 : 0 })),
+  simStep: (dtMs, gpios, logs) => set((s) => ({
+    simTime: s.simTime + dtMs,
+    simPhase: s.simPhase === 0 ? 1 : 0,
+    simGpios: gpios,
+    simLog: [...s.simLog, ...logs].slice(-200)
+  })),
+
+  addBehavior: () => {
+    const id = `beh${Date.now().toString(36)}`
+    set((s) => ({
+      project: {
+        ...s.project,
+        behaviors: [...s.project.behaviors, {
+          id, trigger: { type: 'timer', period_ms: 1000 }, actions: []
+        }]
+      }
+    }))
+    return id
+  },
+  removeBehavior: (id) => set((s) => ({
+    project: { ...s.project, behaviors: s.project.behaviors.filter((b) => b.id !== id) }
+  })),
+  updateBehavior: (id, patch) => set((s) => ({
+    project: {
+      ...s.project,
+      behaviors: s.project.behaviors.map((b) => b.id === id ? { ...b, ...patch } : b)
+    }
+  })),
 
   loadDraftGlb: (glbPath, glbName, glbData, suggestedScale) =>
     set((s) => ({ draft: { ...s.draft, glbPath, glbName, glbData,

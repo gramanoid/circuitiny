@@ -1,7 +1,8 @@
 import { useEffect } from 'react'
+import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels'
 import Viewer3D from './panes/Viewer3D'
-import Schematic from './panes/Schematic'
-import CodePane from './panes/CodePane'
+import SchematicTabs from './panes/SchematicTabs'
+import CodeBuildTabs from './panes/CodeBuildTabs'
 import ChatPane from './panes/ChatPane'
 import CatalogEditor3D from './panes/CatalogEditor3D'
 import CatalogEditorPanel from './panes/CatalogEditorPanel'
@@ -35,44 +36,67 @@ export default function App() {
 
 function ProjectMode() {
   return (
-    <div className="app project-mode">
-      <section className="pane palette">
-        <header>Palette</header>
-        <div className="body" style={{ padding: 0 }}><Palette /></div>
-      </section>
-      <section className="pane viewer">
-        <header>3D Viewer</header>
-        <div className="body"><Viewer3D /></div>
-      </section>
-      <section className="pane schematic">
-        <header>Schematic</header>
-        <div className="body"><Schematic /></div>
-      </section>
-      <section className="pane code">
-        <header>main.c (generated)</header>
-        <div className="body"><CodePane /></div>
-      </section>
-      <section className="pane chat">
-        <header>Agent</header>
-        <div className="body"><ChatPane /></div>
-      </section>
-    </div>
+    <PanelGroup direction="horizontal" autoSaveId="esp-ai:project">
+      <Panel defaultSize={15} minSize={10} maxSize={30}>
+        <PaneFrame title="Palette"><Palette /></PaneFrame>
+      </Panel>
+      <ResizeH />
+      <Panel defaultSize={60} minSize={20}>
+        <PanelGroup direction="vertical" autoSaveId="esp-ai:project:center">
+          <Panel defaultSize={70} minSize={20}>
+            <PanelGroup direction="horizontal" autoSaveId="esp-ai:project:center:top">
+              <Panel defaultSize={60} minSize={20}>
+                <PaneFrame title="3D Viewer" noPad><Viewer3D /></PaneFrame>
+              </Panel>
+              <ResizeH />
+              <Panel defaultSize={40} minSize={15}>
+                <PaneFrame title="Schematic / Behaviors" noPad><SchematicTabs /></PaneFrame>
+              </Panel>
+            </PanelGroup>
+          </Panel>
+          <ResizeV />
+          <Panel defaultSize={30} minSize={10}>
+            <PaneFrame title="Code / Build" noPad><CodeBuildTabs /></PaneFrame>
+          </Panel>
+        </PanelGroup>
+      </Panel>
+      <ResizeH />
+      <Panel defaultSize={25} minSize={15} maxSize={40}>
+        <PaneFrame title="Agent" noPad><ChatPane /></PaneFrame>
+      </Panel>
+    </PanelGroup>
   )
 }
 
 function CatalogEditorMode() {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', height: '100%' }}>
-      <section className="pane viewer">
-        <header>Component Editor — click on the model to add a pin</header>
-        <div className="body"><CatalogEditor3D /></div>
-      </section>
-      <section className="pane chat">
-        <header>Pins</header>
-        <div className="body" style={{ padding: 0 }}><CatalogEditorPanel /></div>
-      </section>
-    </div>
+    <PanelGroup direction="horizontal" autoSaveId="esp-ai:editor">
+      <Panel defaultSize={70} minSize={30}>
+        <PaneFrame title="Component Editor — click on the model to add a pin" noPad><CatalogEditor3D /></PaneFrame>
+      </Panel>
+      <ResizeH />
+      <Panel defaultSize={30} minSize={15} maxSize={50}>
+        <PaneFrame title="Pins"><CatalogEditorPanel /></PaneFrame>
+      </Panel>
+    </PanelGroup>
   )
+}
+
+function PaneFrame({ title, children, noPad }: { title: string; children: React.ReactNode; noPad?: boolean }) {
+  return (
+    <section className="pane" style={{ height: '100%' }}>
+      <header>{title}</header>
+      <div className="body" style={noPad ? { padding: 0, overflow: 'hidden' } : undefined}>{children}</div>
+    </section>
+  )
+}
+
+function ResizeH() {
+  return <PanelResizeHandle style={{ width: 4, background: '#111', cursor: 'col-resize' }} className="resize-h" />
+}
+
+function ResizeV() {
+  return <PanelResizeHandle style={{ height: 4, background: '#111', cursor: 'row-resize' }} className="resize-v" />
 }
 
 const tabStyle = (active: boolean): React.CSSProperties => ({

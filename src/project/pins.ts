@@ -23,7 +23,7 @@ export function resolvePin(project: Project, ref: string): ResolvedPin | null {
     if (!board) return null
     const p = board.pins.find((x) => x.id === pinId)
     if (!p) return null
-    return packPin(ref, p, [0, 0, 0], board.name, p.label)
+    return packPin(ref, p, p.position, board.name, p.label)
   }
 
   const inst = project.components.find((c) => c.instance === owner)

@@ -12,9 +12,9 @@ const ledRed: ComponentDef = {
   pins: [
     { id: 'anode',   label: 'A+', type: 'digital_in',
       voltage: { min: 1.8, max: 3.3, nominal: 2.0 },
-      position: [-0.0012, 0, 0], normal: [0, -1, 0] },
+      position: [-0.0012, -0.005, 0], normal: [0, -1, 0] },
     { id: 'cathode', label: 'K-', type: 'ground',
-      position: [ 0.0012, 0, 0], normal: [0, -1, 0] }
+      position: [ 0.0012, -0.005, 0], normal: [0, -1, 0] }
   ],
   power: { current_ma: 10, rail: '3v3' },
   driver: { language: 'c', defaultPinAssignments: { anode: 'GPIO2' }, includes: ['driver/gpio.h'] },

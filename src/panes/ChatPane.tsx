@@ -10,20 +10,42 @@ export default function ChatPane() {
 
   useEffect(() => { scroller.current?.scrollTo({ top: 9e9 }) }, [msgs])
 
+  const streamIdx = useRef<number | null>(null)
+
   async function send() {
     const text = input.trim()
     if (!text || busy) return
     setInput('')
     setBusy(true)
     const hist = [...msgs]
+    streamIdx.current = null
     try {
       await chat(hist, text, {
-        onMessage: (m) => setMsgs((prev) => [...prev, m]),
+        onMessage: (m) => setMsgs((prev) => {
+          if (m.role === 'assistant' && streamIdx.current !== null) {
+            const next = prev.slice()
+            next[streamIdx.current] = m
+            streamIdx.current = null
+            return next
+          }
+          return [...prev, m]
+        }),
+        onToken: (delta) => setMsgs((prev) => {
+          if (streamIdx.current === null) {
+            streamIdx.current = prev.length
+            return [...prev, { role: 'assistant', content: delta }]
+          }
+          const next = prev.slice()
+          const i = streamIdx.current
+          next[i] = { ...next[i], content: next[i].content + delta }
+          return next
+        }),
         onToolCall: () => {},
         onError: (err) => setMsgs((prev) => [...prev, { role: 'assistant', content: `⚠ ${err}` }])
       }, { model })
     } finally {
       setBusy(false)
+      streamIdx.current = null
     }
   }
 

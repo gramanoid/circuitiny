@@ -143,6 +143,31 @@ function ruleNetSize(project: Project): Violation[] {
   return out
 }
 
+// Suggest a safe replacement board pin id for a given net's current board endpoint.
+// "Safe" = digital_io, not input-only, not strapping, not flash, not already in use by another net.
+export function suggestSafePin(project: Project, netId: string): string | null {
+  const board = catalog.getBoard(project.board)
+  if (!board) return null
+  const net = project.nets.find((n) => n.id === netId)
+  if (!net) return null
+  const inUse = new Set(
+    project.nets.flatMap((n) => n.id === netId ? [] : n.endpoints)
+      .filter((e) => e.startsWith('board.'))
+      .map((e) => e.split('.')[1])
+  )
+  const bad = new Set<string>([
+    ...board.inputOnlyPins, ...board.strappingPins, ...board.flashPins
+  ])
+  const candidate = board.pins.find((p) => {
+    if (p.type !== 'digital_io') return false
+    const gpio = 'GPIO' + p.label
+    if (bad.has(gpio)) return false
+    if (inUse.has(p.id)) return false
+    return true
+  })
+  return candidate?.id ?? null
+}
+
 function ruleStrappingPin(project: Project): Violation[] {
   const board = catalog.getBoard(project.board)
   if (!board) return []

@@ -14,6 +14,7 @@ export interface Msg {
 
 export interface AgentCallbacks {
   onMessage: (m: Msg) => void
+  onToken: (delta: string) => void
   onToolCall: (name: string, args: any, result: any) => void
   onError: (err: string) => void
 }
@@ -45,11 +46,41 @@ export async function chat(
     const resp = await fetch(`${host}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages: conv, tools, stream: false })
+      body: JSON.stringify({ model, messages: conv, tools, stream: true })
     })
-    if (!resp.ok) { cb.onError(`Ollama error ${resp.status}: ${await resp.text()}`); return conv }
-    const data = await resp.json()
-    const msg = data.message as Msg
+    if (!resp.ok || !resp.body) {
+      cb.onError(`Ollama error ${resp.status}: ${await resp.text().catch(() => '')}`)
+      return conv
+    }
+
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    let acc = ''
+    let toolCalls: Msg['tool_calls'] | undefined
+
+    outer: while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      let nl: number
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim()
+        buf = buf.slice(nl + 1)
+        if (!line) continue
+        let chunk: any
+        try { chunk = JSON.parse(line) } catch { continue }
+        const m = chunk.message as Msg | undefined
+        if (m?.content) {
+          acc += m.content
+          cb.onToken(m.content)
+        }
+        if (m?.tool_calls?.length) toolCalls = m.tool_calls
+        if (chunk.done) break outer
+      }
+    }
+
+    const msg: Msg = { role: 'assistant', content: acc, ...(toolCalls ? { tool_calls: toolCalls } : {}) }
     conv.push(msg)
     cb.onMessage(msg)
 
