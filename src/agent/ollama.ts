@@ -2,28 +2,9 @@
 // Uses POST /api/chat; iterates while the model returns tool_calls.
 
 import { tools, execTool } from './tools'
+import type { Msg, AgentCallbacks } from './types'
 
-export interface Msg {
-  role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
-  tool_calls?: Array<{ id?: string; function: { name: string; arguments: any } }>
-  tool_name?: string
-  tool_call_id?: string
-  name?: string
-}
-
-export interface AgentCallbacks {
-  onMessage: (m: Msg) => void
-  onToken: (delta: string) => void
-  onToolCall: (name: string, args: any, result: any) => void
-  onError: (err: string) => void
-}
-
-const SYSTEM = `You are an ESP32 design copilot for hobbyists. The user has a 3D board viewer.
-You manipulate the project by calling tools — never describe code or pin assignments in prose when you could just call the tool.
-
-Workflow rule: when asked to add parts or wire things, call list_catalog first if you haven't yet, then add_component, then connect using exact pin refs like "led1.anode" and "board.gpio4".
-After wiring changes, call run_drc to verify. Keep replies to the user short and focused.`
+export type { Msg, AgentCallbacks }
 
 export async function chat(
   history: Msg[],
@@ -33,13 +14,11 @@ export async function chat(
 ): Promise<Msg[]> {
   const model = opts.model ?? 'qwen3.5:latest'
   const host = opts.host ?? 'http://localhost:11434'
-  const maxLoops = opts.maxToolLoops ?? 6
+  const maxLoops = opts.maxToolLoops ?? 16
 
-  const conv: Msg[] = [
-    ...(history.length === 0 ? [{ role: 'system' as const, content: SYSTEM }] : []),
-    ...history,
-    { role: 'user', content: userMessage }
-  ]
+  // conv is managed by the caller (chat.ts) for non-ollama providers;
+  // ollama manages it here because the system message was historically added here.
+  const conv: Msg[] = [...history, { role: 'user', content: userMessage }]
   cb.onMessage({ role: 'user', content: userMessage })
 
   for (let loop = 0; loop < maxLoops; loop++) {
@@ -71,10 +50,7 @@ export async function chat(
         let chunk: any
         try { chunk = JSON.parse(line) } catch { continue }
         const m = chunk.message as Msg | undefined
-        if (m?.content) {
-          acc += m.content
-          cb.onToken(m.content)
-        }
+        if (m?.content) { acc += m.content; cb.onToken(m.content) }
         if (m?.tool_calls?.length) toolCalls = m.tool_calls
         if (chunk.done) break outer
       }
@@ -94,13 +70,7 @@ export async function chat(
         : call.function.arguments ?? {}
       const result = await execTool(name, args)
       cb.onToolCall(name, args, result)
-      const toolMsg: Msg = {
-        role: 'tool',
-        tool_name: name,
-        name,
-        tool_call_id: call.id,
-        content: JSON.stringify(result)
-      }
+      const toolMsg: Msg = { role: 'tool', tool_name: name, name, tool_call_id: call.id, content: JSON.stringify(result) }
       conv.push(toolMsg)
       cb.onMessage(toolMsg)
     }

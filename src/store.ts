@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { type Project, emptyProject, type PinType, type Behavior } from './project/schema'
+import { type Project, emptyProject, type PinType, type Behavior, type Target } from './project/schema'
+import { catalog } from './catalog'
 
 export type Mode = 'project' | 'catalog-editor'
 
@@ -30,6 +31,7 @@ export type PinRef = string  // "instance.pinId" or "board.pinId"
 interface State {
   mode: Mode
   project: Project
+  showBoardPicker: boolean
   selected: string | null
   pendingPin: PinRef | null
   catalogVersion: number        // bumped when catalog registers new entries — drives re-render
@@ -42,6 +44,8 @@ interface State {
 
   setMode: (m: Mode) => void
   setProject: (p: Project) => void
+  openBoardPicker: () => void
+  createProject: (name: string, boardId: string) => void
   select: (instance: string | null) => void
 
   clickPin: (ref: PinRef) => void
@@ -80,6 +84,7 @@ const newDraft = (): CatalogDraft => ({
 export const useStore = create<State>((set) => ({
   mode: 'project',
   project: seed(),
+  showBoardPicker: false,
   selected: null,
   pendingPin: null,
   catalogVersion: 0,
@@ -92,6 +97,12 @@ export const useStore = create<State>((set) => ({
 
   setMode: (mode) => set({ mode }),
   setProject: (project) => set({ project }),
+  openBoardPicker: () => set({ showBoardPicker: true }),
+  createProject: (name, boardId) => {
+    const board = catalog.getBoard(boardId)
+    const target = (board?.target ?? 'esp32') as Target
+    set({ project: emptyProject(name || 'untitled', boardId, target), showBoardPicker: false, selected: null, pendingPin: null })
+  },
   select: (selected) => set({ selected }),
 
   clickPin: (ref) => set((s) => {
@@ -222,7 +233,7 @@ export const useStore = create<State>((set) => ({
 }))
 
 function seed(): Project {
-  const p = emptyProject('untitled', 'esp32')
+  const p = emptyProject('untitled', 'esp32-devkitc-v4', 'esp32')
   p.components.push({
     instance: 'led1',
     componentId: 'led-5mm-red',

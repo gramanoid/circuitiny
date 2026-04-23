@@ -7,6 +7,7 @@ import ChatPane from './panes/ChatPane'
 import CatalogEditor3D from './panes/CatalogEditor3D'
 import CatalogEditorPanel from './panes/CatalogEditorPanel'
 import Palette from './panes/Palette'
+import BoardPicker from './panes/BoardPicker'
 import { useStore } from './store'
 import { hydrateCatalog } from './catalog/hydrate'
 
@@ -14,6 +15,9 @@ export default function App() {
   const mode = useStore((s) => s.mode)
   const setMode = useStore((s) => s.setMode)
   const bump = useStore((s) => s.bumpCatalog)
+  const showBoardPicker = useStore((s) => s.showBoardPicker)
+  const openBoardPicker = useStore((s) => s.openBoardPicker)
+  const projectName = useStore((s) => s.project.name)
 
   useEffect(() => {
     hydrateCatalog().then((n) => { if (n > 0) bump() }).catch(() => { /* ignore */ })
@@ -26,10 +30,14 @@ export default function App() {
         <strong style={{ fontSize: 12, marginRight: 12 }}>esp-ai</strong>
         <button onClick={() => setMode('project')} style={tabStyle(mode === 'project')}>Project</button>
         <button onClick={() => setMode('catalog-editor')} style={tabStyle(mode === 'catalog-editor')}>Catalog Editor</button>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 11, color: '#555', marginRight: 8 }}>{projectName}</span>
+        <button onClick={openBoardPicker} style={newProjectStyle}>+ New Project</button>
       </nav>
       <div style={{ flex: 1, minHeight: 0 }}>
         {mode === 'project' ? <ProjectMode /> : <CatalogEditorMode />}
       </div>
+      {showBoardPicker && <BoardPicker />}
     </div>
   )
 }
@@ -105,3 +113,13 @@ const tabStyle = (active: boolean): React.CSSProperties => ({
   border: '1px solid ' + (active ? '#4a90d9' : '#333'),
   borderRadius: 4, padding: '3px 10px', fontSize: 11, cursor: 'pointer'
 })
+
+const newProjectStyle: React.CSSProperties = {
+  background: 'transparent',
+  color: '#4a90d9',
+  border: '1px solid #4a90d940',
+  borderRadius: 4,
+  padding: '3px 10px',
+  fontSize: 11,
+  cursor: 'pointer',
+}

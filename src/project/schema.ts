@@ -1,7 +1,7 @@
 // project.json — single source of truth.
 // IR (resolved buses, etc.) is derived from this in ir.ts.
 
-export type Target = 'esp32' | 'esp32s3' | 'esp32c3'
+export type Target = 'esp32' | 'esp32s2' | 'esp32s3' | 'esp32c3' | 'esp32c6' | 'esp32h2'
 
 export type PinType =
   | 'power_in' | 'power_out' | 'ground'
@@ -75,11 +75,15 @@ export interface Project {
   drcOverrides?: string[]      // warning ids the user has dismissed
 }
 
-export const emptyProject = (name: string, target: Target = 'esp32'): Project => ({
+export const emptyProject = (
+  name: string,
+  boardId: string = 'esp32-devkitc-v4',
+  target: Target = 'esp32'
+): Project => ({
   schemaVersion: 1,
   name,
   target,
-  board: target === 'esp32' ? 'esp32-devkitc-v4' : `${target}-devkit`,
+  board: boardId,
   components: [],
   nets: [],
   behaviors: [],

@@ -180,9 +180,14 @@ ipcMain.handle('idfStart', async (_e, opts: {
   }
 
   const runId = randomUUID()
-  const shell = `source ${JSON.stringify(join(IDF_PATH, 'export.sh'))} >/dev/null && cd ${JSON.stringify(dir)} && ${cmd}`
-  const child = spawn('bash', ['-lc', shell], {
-    env: { ...process.env, IDF_PATH, PYTHONUNBUFFERED: '1' }
+  const shell = `source ${JSON.stringify(join(IDF_PATH, 'export.sh'))} 1>/dev/null && cd ${JSON.stringify(dir)} && ${cmd}`
+  // GUI apps on macOS don't inherit the terminal PATH, so Homebrew's python3 is
+  // not visible to bash -l. Prepend the common Homebrew prefixes explicitly so
+  // export.sh can activate the venv and put idf.py on PATH.
+  const extraPaths = ['/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', '/usr/local/sbin']
+  const PATH = [...extraPaths, process.env.PATH ?? ''].join(':')
+  const child = spawn('bash', ['-c', shell], {
+    env: { ...process.env, PATH, IDF_PATH, PYTHONUNBUFFERED: '1' }
   }) as ChildProcessWithoutNullStreams
   runs.set(runId, child)
 

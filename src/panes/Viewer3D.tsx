@@ -39,47 +39,56 @@ function PinAnchor({ pin, owner, position, color, glow, onClick }: {
   )
 }
 
-function BoardMesh() {
+// Generic PCB placeholder sized to the board's actual pin bounding box.
+// Used when no GLB is registered yet (M2 pending).
+function BoardMesh({ board }: { board: import('../project/component').BoardDef }) {
+  const edgePins = board.pins.filter((p) => p.normal[1] > 0)  // top-facing (edge headers)
+
+  const xs = edgePins.map((p) => p.position[0])
+  const zs = edgePins.map((p) => p.position[2])
+  const minX = xs.length ? Math.min(...xs) : -0.027
+  const maxX = xs.length ? Math.max(...xs) : 0.027
+  const minZ = zs.length ? Math.min(...zs) : -0.014
+  const maxZ = zs.length ? Math.max(...zs) : 0.014
+
+  // PCB outline with a small margin around the pin extents
+  const margin = 0.004
+  const pcbW = (maxX - minX) + margin * 2        // long axis (x)
+  const pcbD = (maxZ - minZ) + margin * 2        // short axis (z)
+  const cx   = (minX + maxX) / 2
+  const cz   = (minZ + maxZ) / 2
+
+  // Unique z values → one header rail per unique z (left / right long edges)
+  const uniqueZ = [...new Set(zs.map((z) => Math.round(z * 10000) / 10000))]
+
+  // USB stub at the -x end (anti-USB end is +x for DevKitC convention,
+  // but we have no orientation info — place it at the -x end as a placeholder)
+  const usbX = minX - 0.004
+
   return (
     <group>
-      {/* PCB */}
-      <mesh position={[0, 0.005, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.055, 0.0016, 0.028]} />
+      {/* PCB body */}
+      <mesh position={[cx, 0.005, cz]} castShadow receiveShadow>
+        <boxGeometry args={[pcbW, 0.0016, pcbD]} />
         <meshStandardMaterial color="#1f4f3a" roughness={0.6} />
       </mesh>
-      {/* ESP32 shield can */}
-      <mesh position={[0.005, 0.008, 0]} castShadow>
-        <boxGeometry args={[0.018, 0.003, 0.02]} />
-        <meshStandardMaterial color="#ddd" metalness={0.85} roughness={0.3} />
-      </mesh>
-      {/* PCB antenna footprint (zigzag-ish block) */}
-      <mesh position={[0.02, 0.0062, 0]}>
-        <boxGeometry args={[0.008, 0.0005, 0.014]} />
-        <meshStandardMaterial color="#d4a74a" metalness={0.8} roughness={0.4} />
-      </mesh>
-      {/* Micro-USB connector */}
-      <mesh position={[-0.027, 0.009, 0]} castShadow>
+      {/* USB connector stub */}
+      <mesh position={[usbX, 0.009, cz]} castShadow>
         <boxGeometry args={[0.008, 0.006, 0.008]} />
         <meshStandardMaterial color="#aaa" metalness={0.8} roughness={0.3} />
       </mesh>
-      {/* BOOT + EN buttons */}
-      <mesh position={[-0.018, 0.0075, 0.011]}>
-        <boxGeometry args={[0.004, 0.002, 0.004]} />
-        <meshStandardMaterial color="#222" />
+      {/* Module shield can — approximate, centered on PCB */}
+      <mesh position={[cx + pcbW * 0.1, 0.008, cz]} castShadow>
+        <boxGeometry args={[pcbW * 0.38, 0.003, pcbD * 0.65]} />
+        <meshStandardMaterial color="#ddd" metalness={0.85} roughness={0.3} />
       </mesh>
-      <mesh position={[-0.018, 0.0075, -0.011]}>
-        <boxGeometry args={[0.004, 0.002, 0.004]} />
-        <meshStandardMaterial color="#222" />
-      </mesh>
-      {/* Pin header rails (black plastic strips) */}
-      <mesh position={[0, 0.0062, -0.0145]}>
-        <boxGeometry args={[0.048, 0.002, 0.0025]} />
-        <meshStandardMaterial color="#0a0a0a" />
-      </mesh>
-      <mesh position={[0, 0.0062, 0.0145]}>
-        <boxGeometry args={[0.048, 0.002, 0.0025]} />
-        <meshStandardMaterial color="#0a0a0a" />
-      </mesh>
+      {/* Pin header rails — one per unique z edge */}
+      {uniqueZ.map((z) => (
+        <mesh key={z} position={[cx, 0.0062, z]}>
+          <boxGeometry args={[pcbW - margin, 0.002, 0.0025]} />
+          <meshStandardMaterial color="#0a0a0a" />
+        </mesh>
+      ))}
     </group>
   )
 }
@@ -93,7 +102,7 @@ function BoardWithPins() {
   const glbUrl = catalog.getGlbUrl(board.id)
   return (
     <group>
-      {glbUrl ? <LoadedGlb url={glbUrl} /> : <BoardMesh />}
+      {glbUrl ? <LoadedGlb url={glbUrl} /> : <BoardMesh board={board} />}
       {board.pins.map((p) => {
         const ref = `board.${p.id}`
         const isPending = pendingPin === ref
@@ -375,14 +384,17 @@ export default function Viewer3D() {
     if (simulating && !canRun) setSim(false)
   }, [simulating, canRun, setSim])
 
-  // On start: seed GPIOs and fire boot triggers in a single step.
+  // On start: seed GPIOs, emit DRC warnings into the log, fire boot triggers.
   useEffect(() => {
     if (!simulating) return
+    const preflight = runDrc(project).warnings.map(
+      (w) => `⚠ [preflight] ${w.message}`
+    )
     const seed = initialGpios(project)
     const first = stepBehaviors(project, 0, seed, 0)
     useStore.setState((s) => ({
       simGpios: first.gpios,
-      simLog: [...s.simLog, ...first.logs].slice(-200)
+      simLog: [...s.simLog, ...preflight, ...first.logs].slice(-200)
     }))
     const id = window.setInterval(() => {
       const s = useStore.getState()
@@ -428,7 +440,40 @@ export default function Viewer3D() {
   )
 }
 
-// An LED is lit when the board pin it's wired to has a high output in simGpios.
+// Walk the net graph from startPin, crossing through passive components (those
+// with exactly 2 pins, e.g. resistors), until a board.* endpoint is found.
+// Returns the board pin id or null. Visited set prevents infinite loops.
+function findBoardGpio(
+  project: ReturnType<typeof useStore.getState>['project'],
+  startPin: string,
+  visited = new Set<string>()
+): string | null {
+  if (visited.has(startPin)) return null
+  visited.add(startPin)
+  const net = project.nets.find((n) => n.endpoints.includes(startPin))
+  if (!net) return null
+  for (const ep of net.endpoints) {
+    if (ep === startPin) continue
+    if (ep.startsWith('board.')) return ep.split('.')[1]
+    // ep is a component pin — cross through if the component is passive (2 pins)
+    const [inst] = ep.split('.')
+    const comp = project.components.find((c) => c.instance === inst)
+    if (!comp) continue
+    const def = catalog.getComponent(comp.componentId)
+    if (!def || def.pins.length !== 2) continue
+    // walk out the other pin of this passive
+    for (const p of def.pins) {
+      const other = `${inst}.${p.id}`
+      if (other !== ep) {
+        const result = findBoardGpio(project, other, visited)
+        if (result) return result
+      }
+    }
+  }
+  return null
+}
+
+// An LED is lit when the GPIO driving its anode (possibly via passives) is high.
 function computeLitLeds(
   project: ReturnType<typeof useStore.getState>['project'],
   simGpios: Record<string, boolean>
@@ -438,14 +483,9 @@ function computeLitLeds(
   if (!board) return out
   for (const c of project.components) {
     const def = catalog.getComponent(c.componentId)
-    if (!def) continue
-    if (!def.pins.some((p) => p.id === 'anode')) continue
-    const anodeRef = `${c.instance}.anode`
-    const net = project.nets.find((n) => n.endpoints.includes(anodeRef))
-    if (!net) continue
-    const boardEp = net.endpoints.find((e) => e.startsWith('board.'))
-    if (!boardEp) continue
-    const boardPinId = boardEp.split('.')[1]
+    if (!def || !def.pins.some((p) => p.id === 'anode')) continue
+    const boardPinId = findBoardGpio(project, `${c.instance}.anode`)
+    if (!boardPinId) continue
     const label = board.pins.find((p) => p.id === boardPinId)?.label
     if (label && simGpios[label]) out.add(c.instance)
   }

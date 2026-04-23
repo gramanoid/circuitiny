@@ -41,7 +41,9 @@ export interface ComponentDef {
 
 // Boards are components with extra MCU metadata.
 export interface BoardDef extends ComponentDef {
-  target: 'esp32' | 'esp32s3' | 'esp32c3'
+  target: 'esp32' | 'esp32s2' | 'esp32s3' | 'esp32c3' | 'esp32c6' | 'esp32h2'
+  boardVersion?: string
+  features?: string[]                      // human-readable feature tags shown in board picker
   inputOnlyPins: string[]
   strappingPins: string[]
   flashPins: string[]

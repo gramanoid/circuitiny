@@ -23,7 +23,9 @@ const rules: Rule[] = [
   ruleVoltageMismatch,
   rulePowerToGroundShort,
   ruleNetSize,
-  ruleStrappingPin
+  ruleStrappingPin,
+  ruleLedWithoutResistor,
+  ruleLedResistorTooLow,
 ]
 
 export function runDrc(project: Project): { errors: Violation[]; warnings: Violation[] } {
@@ -182,6 +184,99 @@ function ruleStrappingPin(project: Project): Violation[] {
         severity: 'warning',
         message: `GPIO${label} is a boot strapping pin — driving it at boot can prevent the chip from starting`,
         involves: net.endpoints
+      })
+    }
+  }
+  return out
+}
+
+// ── LED safety rules ──────────────────────────────────────────────────────
+
+// Trace from a pin ref through 2-pin passives toward the board GPIO.
+// Returns the board pin id found (or null) and whether a resistor was crossed.
+function traceToBoard(
+  project: Project,
+  pinRef: string,
+  visited = new Set<string>()
+): { boardPinId: string | null; seriesOhms: number } {
+  if (visited.has(pinRef)) return { boardPinId: null, seriesOhms: 0 }
+  visited.add(pinRef)
+  const net = project.nets.find((n) => n.endpoints.includes(pinRef))
+  if (!net) return { boardPinId: null, seriesOhms: 0 }
+  for (const ep of net.endpoints) {
+    if (ep === pinRef) continue
+    if (ep.startsWith('board.')) return { boardPinId: ep.split('.')[1], seriesOhms: 0 }
+    const [inst] = ep.split('.')
+    const comp = project.components.find((c) => c.instance === inst)
+    if (!comp) continue
+    const def = catalog.getComponent(comp.componentId)
+    if (!def || def.pins.length !== 2) continue
+    const ohms = parseResistorOhms(comp.componentId)
+    for (const p of def.pins) {
+      const other = `${inst}.${p.id}`
+      if (other === ep) continue
+      const result = traceToBoard(project, other, visited)
+      if (result.boardPinId !== null) {
+        return { boardPinId: result.boardPinId, seriesOhms: ohms + result.seriesOhms }
+      }
+    }
+  }
+  return { boardPinId: null, seriesOhms: 0 }
+}
+
+// Parse resistance from catalog IDs like "resistor-220r", "resistor-4k7", "resistor-10k".
+function parseResistorOhms(componentId: string): number {
+  const m = componentId.match(/resistor-(\d+(?:\.\d+)?)(r|k|m)/i)
+  if (!m) return 0
+  const val = parseFloat(m[1])
+  switch (m[2].toLowerCase()) {
+    case 'r': return val
+    case 'k': return val * 1000
+    case 'm': return val * 1_000_000
+    default: return 0
+  }
+}
+
+function ruleLedWithoutResistor(project: Project): Violation[] {
+  const out: Violation[] = []
+  for (const c of project.components) {
+    const def = catalog.getComponent(c.componentId)
+    if (!def || !def.pins.some((p) => p.id === 'anode')) continue
+    const { boardPinId, seriesOhms } = traceToBoard(project, `${c.instance}.anode`)
+    if (boardPinId !== null && seriesOhms === 0) {
+      out.push({
+        id: 'electronics.led_no_resistor',
+        severity: 'warning',
+        message: `${c.instance} is wired directly to a GPIO with no series resistor — the LED will likely burn out at 3.3 V`,
+        involves: [`${c.instance}.anode`],
+        fixHint: { action: 'add_component', componentId: 'resistor-220r' }
+      })
+    }
+  }
+  return out
+}
+
+// For a 3.3 V GPIO: I = (3.3 − Vf) / R. Typical Vf 2.0 V (red/yellow) or 3.0 V (blue/white).
+// Flag if calculated current exceeds 30 mA (absolute max for most LEDs).
+const VCC = 3.3
+const VF_TYPICAL = 2.0   // conservative Vf assumption
+const MAX_CURRENT_MA = 30
+
+function ruleLedResistorTooLow(project: Project): Violation[] {
+  const out: Violation[] = []
+  for (const c of project.components) {
+    const def = catalog.getComponent(c.componentId)
+    if (!def || !def.pins.some((p) => p.id === 'anode')) continue
+    const { boardPinId, seriesOhms } = traceToBoard(project, `${c.instance}.anode`)
+    if (boardPinId === null || seriesOhms === 0) continue
+    const currentMa = ((VCC - VF_TYPICAL) / seriesOhms) * 1000
+    if (currentMa > MAX_CURRENT_MA) {
+      out.push({
+        id: 'electronics.led_resistor_too_low',
+        severity: 'warning',
+        message: `${c.instance}: series resistance ${seriesOhms} Ω gives ~${currentMa.toFixed(0)} mA at 3.3 V — exceeds 30 mA max. Use ≥ 43 Ω (recommended 220 Ω)`,
+        involves: [`${c.instance}.anode`],
+        fixHint: { action: 'replace_component', componentId: 'resistor-220r' }
       })
     }
   }
