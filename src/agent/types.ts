@@ -22,6 +22,8 @@ export interface ProviderConfig {
   apiKey?: string
   baseUrl?: string   // custom Ollama host or OpenRouter base
   maxToolLoops?: number
+  expertMode?: boolean
+  signal?: AbortSignal
 }
 
 export const PROVIDER_DEFAULTS: Record<ProviderType, { label: string; defaultModel: string; baseUrl: string; needsKey: boolean }> = {

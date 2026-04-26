@@ -18,7 +18,8 @@ const ledRed: ComponentDef = {
   ],
   power: { current_ma: 10, rail: '3v3' },
   driver: { language: 'c', defaultPinAssignments: { anode: 'GPIO2' }, includes: ['driver/gpio.h'] },
-  schematic: { autoGenerate: true, shape: 'circle' }
+  schematic: { symbol: 'led' },
+  sim: { role: 'led', outputPin: 'anode' }
 }
 
 // Lay out header pins along the long edges of a PCB centered at origin.
@@ -302,7 +303,38 @@ const xiaoS3: BoardDef = {
   ]
 }
 
-const components: Record<string, ComponentDef> = { [ledRed.id]: ledRed }
+const resistor220: ComponentDef = {
+  id: 'resistor-220r',
+  name: 'Resistor 220Ω',
+  version: '0.1.0',
+  category: 'misc',
+  model: 'resistor.glb',
+  pins: [
+    { id: 'in',  label: 'in',  type: 'digital_in',  position: [-0.003, -0.003, 0], normal: [0, -1, 0] },
+    { id: 'out', label: 'out', type: 'digital_out', position: [ 0.003, -0.003, 0], normal: [0, -1, 0] }
+  ],
+  schematic: { symbol: 'resistor' },
+}
+
+const button6mm: ComponentDef = {
+  id: 'button-6mm',
+  name: 'Push Button 6mm',
+  version: '0.1.0',
+  category: 'input',
+  model: 'button.glb',
+  pins: [
+    { id: 'a', label: 'A', type: 'digital_io', position: [-0.0032, -0.003, 0], normal: [0, -1, 0] },
+    { id: 'b', label: 'B', type: 'digital_io', position: [ 0.0032, -0.003, 0], normal: [0, -1, 0] }
+  ],
+  schematic: { symbol: 'button' },
+  sim: { role: 'button', inputPin: 'a' }
+}
+
+const components: Record<string, ComponentDef> = {
+  [ledRed.id]:     ledRed,
+  [resistor220.id]: resistor220,
+  [button6mm.id]:  button6mm,
+}
 const boards: Record<string, BoardDef> = {
   [devkitc.id]:  devkitc,
   [s3devkitc.id]: s3devkitc,
@@ -347,6 +379,10 @@ export function pinColor(type: PinType): string {
     case 'spi_cs':      return '#af52de'
     case 'uart_tx':
     case 'uart_rx':     return '#ff9500'
+    case 'i2s_bclk':
+    case 'i2s_lrclk':
+    case 'i2s_din':
+    case 'i2s_dout':    return '#ff2d92'
     case 'pwm':         return '#00c7be'
     case 'nc':          return '#222'
   }

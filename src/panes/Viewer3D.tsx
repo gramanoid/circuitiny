@@ -1,14 +1,13 @@
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, Grid, Environment, Html, CubicBezierLine, TransformControls, useGLTF } from '@react-three/drei'
 import { useStore } from '../store'
-import { Suspense, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import React, { Suspense, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import * as THREE from 'three'
 import type { ComponentInstance } from '../project/schema'
 import type { PinDef } from '../project/component'
 import { catalog, pinColor } from '../catalog'
 import { resolvePin, netColor } from '../project/pins'
 import { runDrc, suggestSafePin, type Violation } from '../drc'
-import { stepBehaviors, initialGpios } from '../sim/evaluate'
 
 function PinAnchor({ pin, owner, position, color, glow, onClick }: {
   pin: PinDef
@@ -118,19 +117,55 @@ function BoardWithPins() {
   )
 }
 
-function LoadedGlb({ url, scale = 1 }: { url: string; scale?: number }) {
+function LoadedGlb({ url, scale = 1, lit, simActive }: {
+  url: string; scale?: number; lit?: boolean; simActive?: boolean
+}) {
   const gltf = useGLTF(url)
   const scene = useMemo(() => gltf.scene.clone(true), [gltf])
-  return <primitive object={scene} scale={[scale, scale, scale]} />
+
+  // Apply emissive tint to all meshes when lit or active.
+  useEffect(() => {
+    scene.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        const mat = child.material as THREE.MeshStandardMaterial
+        if (!mat) return
+        if (lit) {
+          mat.emissive = new THREE.Color('#ff2200')
+          mat.emissiveIntensity = 1.5
+        } else if (simActive) {
+          mat.emissive = new THREE.Color('#0044ff')
+          mat.emissiveIntensity = 0.8
+        } else {
+          mat.emissive = new THREE.Color('#000000')
+          mat.emissiveIntensity = 0
+        }
+      }
+    })
+  }, [scene, lit, simActive])
+
+  return (
+    <group>
+      <primitive object={scene} scale={[scale, scale, scale]} />
+      {lit && <pointLight position={[0, 0.004, 0]} intensity={0.03} distance={0.06} color="#ff4400" />}
+      {simActive && !lit && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]}>
+          <ringGeometry args={[0.005, 0.006, 24]} />
+          <meshStandardMaterial color="#00aaff" emissive="#00aaff" emissiveIntensity={2} side={2} />
+        </mesh>
+      )}
+    </group>
+  )
 }
 
-function DefaultBody({ componentId, onClick, selected, lit }: {
+function DefaultBody({ componentId, onClick, selected, lit, isButton, simActive }: {
   componentId: string
   onClick: (e: ThreeEvent<MouseEvent>) => void
   selected: boolean
   lit?: boolean
+  isButton?: boolean
+  simActive?: boolean
 }) {
-  // LED: dome + two leads. Anything else: red cube fallback.
+  // LED: dome + two leads.
   if (componentId === 'led-5mm-red') {
     const emissive = lit ? '#ff3030' : (selected ? '#551100' : '#220000')
     const emissiveIntensity = lit ? 3 : 1
@@ -147,12 +182,10 @@ function DefaultBody({ componentId, onClick, selected, lit }: {
           <meshStandardMaterial color="#ff2222" transparent opacity={0.85}
                                 emissive={emissive} emissiveIntensity={emissiveIntensity * 0.5} />
         </mesh>
-        {/* anode lead (longer) */}
         <mesh position={[-0.0012, -0.005, 0]}>
           <cylinderGeometry args={[0.0003, 0.0003, 0.006, 8]} />
           <meshStandardMaterial color="#c0c0c0" metalness={0.85} roughness={0.3} />
         </mesh>
-        {/* cathode lead (shorter) */}
         <mesh position={[0.0012, -0.004, 0]}>
           <cylinderGeometry args={[0.0003, 0.0003, 0.005, 8]} />
           <meshStandardMaterial color="#c0c0c0" metalness={0.85} roughness={0.3} />
@@ -160,6 +193,28 @@ function DefaultBody({ componentId, onClick, selected, lit }: {
       </group>
     )
   }
+  // Button: box with a highlight ring when clickable, brighter when pressed.
+  if (isButton) {
+    const pressed = lit
+    const color = pressed ? '#ffffff' : (simActive ? '#00aaff' : (selected ? '#ffaa00' : '#555'))
+    const emissive = pressed ? '#aaddff' : (simActive ? '#00aaff' : '#000')
+    const emissiveInt = pressed ? 4 : (simActive ? 1.5 : 0.2)
+    return (
+      <group onClick={onClick}>
+        <mesh castShadow position={[0, pressed ? 0.001 : 0.002, 0]}>
+          <boxGeometry args={[0.006, pressed ? 0.002 : 0.004, 0.006]} />
+          <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={emissiveInt} />
+        </mesh>
+        {simActive && (
+          <mesh position={[0, 0.003, 0]}>
+            <ringGeometry args={[0.004, 0.005, 24]} />
+            <meshStandardMaterial color="#00aaff" emissive="#00aaff" emissiveIntensity={pressed ? 4 : 2} side={2} />
+          </mesh>
+        )}
+      </group>
+    )
+  }
+  // Generic fallback.
   return (
     <mesh onClick={onClick}>
       <boxGeometry args={[0.006, 0.006, 0.006]} />
@@ -168,22 +223,60 @@ function DefaultBody({ componentId, onClick, selected, lit }: {
   )
 }
 
-function ComponentWithPins({ c, selected, lit }: { c: ComponentInstance; selected: boolean; lit: boolean }) {
+function ComponentWithPins({ c, selected, lit, simActive }: {
+  c: ComponentInstance; selected: boolean; lit: boolean; simActive: boolean
+}) {
   const select = useStore((s) => s.select)
   const pendingPin = useStore((s) => s.pendingPin)
   const clickPin = useStore((s) => s.clickPin)
   const move = useStore((s) => s.moveComponent)
+  const simulating = useStore((s) => s.simulating)
+  const pressButton = useStore((s) => s.pressButton)
+  const releaseButton = useStore((s) => s.releaseButton)
   const def = catalog.getComponent(c.componentId)
   const glbUrl = catalog.getGlbUrl(c.componentId)
   const pos = c.position ?? [0, 0.01, 0]
   const groupRef = useRef<THREE.Group>(null)
 
+  const isButton = def?.sim?.role === 'button'
+
+  function resolveButtonLabel(): string | null {
+    if (!def?.sim?.inputPin) return null
+    const pinRef = `${c.instance}.${def.sim.inputPin}`
+    const net = useStore.getState().project.nets.find((n) => n.endpoints.includes(pinRef))
+    const boardEp = net?.endpoints.find((ep) => ep.startsWith('board.'))
+    if (!boardEp) return null
+    const board = catalog.getBoard(useStore.getState().project.board)
+    const pid = boardEp.split('.')[1]
+    return board?.pins.find((p) => p.id === pid)?.label ?? null
+  }
+
+  function handlePointerDown(e: ThreeEvent<PointerEvent>) {
+    e.stopPropagation()
+    if (simulating && isButton) {
+      const label = resolveButtonLabel()
+      if (label) pressButton(label)
+    } else {
+      select(c.instance)
+    }
+  }
+
+  function handlePointerUp(e: ThreeEvent<PointerEvent>) {
+    e.stopPropagation()
+    if (simulating && isButton) {
+      const label = resolveButtonLabel()
+      if (label) releaseButton(label)
+    }
+  }
+
   const content = (
     <group ref={groupRef} position={pos}>
-      <group onClick={(e) => { e.stopPropagation(); select(c.instance) }}>
+      <group onPointerDown={handlePointerDown} onPointerUp={handlePointerUp}>
         {glbUrl
-          ? <LoadedGlb url={glbUrl} scale={def?.scale ?? 1} />
-          : <DefaultBody componentId={c.componentId} selected={selected} lit={lit} onClick={() => select(c.instance)} />}
+          ? <LoadedGlb url={glbUrl} scale={def?.scale ?? 1} lit={lit} simActive={simActive} />
+          : <DefaultBody componentId={c.componentId} selected={selected} lit={lit}
+                         isButton={isButton} simActive={simActive}
+                         onClick={() => {}} />}
       </group>
       {def?.pins.map((p) => {
         const ref = `${c.instance}.${p.id}`
@@ -312,31 +405,22 @@ function DrcOverlay({ result }: { result: ReturnType<typeof runDrc> }) {
   )
 }
 
-function SimControls({ canRun }: { canRun: boolean }) {
+function SimBadge() {
   const simulating = useStore((s) => s.simulating)
-  const setSim = useStore((s) => s.setSimulating)
+  const simTime    = useStore((s) => s.simTime)
+  if (!simulating) return null
+  const label = simTime < 1000 ? `${simTime} ms` : `${(simTime / 1000).toFixed(1)} s`
   return (
     <div style={{
-      position: 'absolute', top: 8, left: 8, background: 'rgba(20,20,20,0.92)',
-      border: '1px solid #333', borderRadius: 4, padding: 4, zIndex: 10,
-      display: 'flex', gap: 4, alignItems: 'center', fontSize: 11, color: '#ddd'
+      position: 'absolute', top: 8, left: 8, zIndex: 10,
+      background: 'rgba(26,58,26,0.92)', border: '1px solid #4a9d4a',
+      borderRadius: 4, padding: '3px 8px', fontSize: 10,
+      color: '#7edd7e', pointerEvents: 'none',
+      fontFamily: "'SF Mono', Menlo, monospace",
+      display: 'flex', alignItems: 'center', gap: 6,
     }}>
-      <button
-        onClick={() => setSim(!simulating)}
-        disabled={!simulating && !canRun}
-        title={simulating ? 'Stop simulation' : canRun ? 'Start simulation' : 'Fix DRC errors first'}
-        style={{
-          background: simulating ? '#402020' : (canRun ? '#203a20' : '#1a1a1a'),
-          color: canRun || simulating ? '#fff' : '#666',
-          border: '1px solid ' + (simulating ? '#ff6b6b' : canRun ? '#4a9d4a' : '#333'),
-          borderRadius: 3, padding: '2px 10px', fontSize: 11,
-          cursor: (simulating || canRun) ? 'pointer' : 'not-allowed'
-        }}>
-        {simulating ? '■ Stop' : '▶ Play'}
-      </button>
-      <span style={{ fontSize: 10, color: '#888' }}>
-        {simulating ? 'simulating' : canRun ? 'ready' : 'DRC errors'}
-      </span>
+      <span style={{ fontSize: 7, lineHeight: 1 }}>●</span>
+      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{label}</span>
     </div>
   )
 }
@@ -360,8 +444,6 @@ function PendingHint() {
   )
 }
 
-const SIM_TICK_MS = 100
-
 export default function Viewer3D() {
   const project = useStore((s) => s.project)
   const selected = useStore((s) => s.selected)
@@ -369,10 +451,9 @@ export default function Viewer3D() {
   const cancel = useStore((s) => s.cancelWire)
   const simulating = useStore((s) => s.simulating)
   const simGpios = useStore((s) => s.simGpios)
-  const setSim = useStore((s) => s.setSimulating)
+  const catalogVersion = useStore((s) => s.catalogVersion)
 
-  const drc = useMemo(() => runDrc(project), [project])
-  const canRun = drc.errors.length === 0
+  const drc = useMemo(() => runDrc(project), [project, catalogVersion])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') cancel() }
@@ -380,42 +461,15 @@ export default function Viewer3D() {
     return () => window.removeEventListener('keydown', onKey)
   }, [cancel])
 
-  useEffect(() => {
-    if (simulating && !canRun) setSim(false)
-  }, [simulating, canRun, setSim])
-
-  // On start: seed GPIOs, emit DRC warnings into the log, fire boot triggers.
-  useEffect(() => {
-    if (!simulating) return
-    const preflight = runDrc(project).warnings.map(
-      (w) => `⚠ [preflight] ${w.message}`
-    )
-    const seed = initialGpios(project)
-    const first = stepBehaviors(project, 0, seed, 0)
-    useStore.setState((s) => ({
-      simGpios: first.gpios,
-      simLog: [...s.simLog, ...preflight, ...first.logs].slice(-200)
-    }))
-    const id = window.setInterval(() => {
-      const s = useStore.getState()
-      if (!s.simulating) return
-      const step = stepBehaviors(s.project, s.simTime, s.simGpios, SIM_TICK_MS)
-      s.simStep(SIM_TICK_MS, step.gpios, step.logs)
-    }, SIM_TICK_MS)
-    return () => window.clearInterval(id)
-    // Re-seed only on sim start; project edits during sim are picked up via getState above.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [simulating])
-
-  const litInstances = useMemo(() => {
-    if (!simulating) return new Set<string>()
-    return computeLitLeds(project, simGpios)
-  }, [simulating, project, simGpios])
+  const simStates = useMemo(() => {
+    if (!simulating) return { lit: new Set<string>(), active: new Set<string>() }
+    return computeSimStates(project, simGpios)
+  }, [simulating, project, simGpios, catalogVersion])
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <Canvas shadows camera={{ position: [0.12, 0.1, 0.12], fov: 40, near: 0.001, far: 10 }}
-              style={{ background: '#0e0e0e' }}
+      <Canvas shadows="variance" camera={{ position: [0.12, 0.1, 0.12], fov: 40, near: 0.001, far: 10 }}
+              style={{ background: '#F2F7F2' }}
               onPointerMissed={() => select(null)}>
         <Suspense fallback={null}>
           <ambientLight intensity={0.4} />
@@ -427,13 +481,14 @@ export default function Viewer3D() {
           {project.components.map((c) => (
             <ComponentWithPins key={c.instance} c={c}
                                selected={selected === c.instance}
-                               lit={litInstances.has(c.instance)} />
+                               lit={simStates.lit.has(c.instance)}
+                               simActive={simStates.active.has(c.instance)} />
           ))}
           <Nets violations={[...drc.errors, ...drc.warnings]} />
           <OrbitControls makeDefault target={[0, 0, 0]} />
         </Suspense>
       </Canvas>
-      <SimControls canRun={canRun} />
+      <SimBadge />
       <DrcOverlay result={drc} />
       <PendingHint />
     </div>
@@ -455,13 +510,11 @@ function findBoardGpio(
   for (const ep of net.endpoints) {
     if (ep === startPin) continue
     if (ep.startsWith('board.')) return ep.split('.')[1]
-    // ep is a component pin — cross through if the component is passive (2 pins)
     const [inst] = ep.split('.')
     const comp = project.components.find((c) => c.instance === inst)
     if (!comp) continue
     const def = catalog.getComponent(comp.componentId)
     if (!def || def.pins.length !== 2) continue
-    // walk out the other pin of this passive
     for (const p of def.pins) {
       const other = `${inst}.${p.id}`
       if (other !== ep) {
@@ -473,21 +526,42 @@ function findBoardGpio(
   return null
 }
 
-// An LED is lit when the GPIO driving its anode (possibly via passives) is high.
-function computeLitLeds(
+interface SimStates {
+  lit: Set<string>     // instances whose output GPIO is high (LEDs, generic_output)
+  active: Set<string>  // input instances wired to a board GPIO (buttons ready to fire)
+}
+
+// Compute per-instance visual states from GPIO map using catalog sim metadata.
+function computeSimStates(
   project: ReturnType<typeof useStore.getState>['project'],
   simGpios: Record<string, boolean>
-): Set<string> {
-  const out = new Set<string>()
+): SimStates {
+  const lit = new Set<string>()
+  const active = new Set<string>()
   const board = catalog.getBoard(project.board)
-  if (!board) return out
+  if (!board) return { lit, active }
+
   for (const c of project.components) {
     const def = catalog.getComponent(c.componentId)
-    if (!def || !def.pins.some((p) => p.id === 'anode')) continue
-    const boardPinId = findBoardGpio(project, `${c.instance}.anode`)
-    if (!boardPinId) continue
-    const label = board.pins.find((p) => p.id === boardPinId)?.label
-    if (label && simGpios[label]) out.add(c.instance)
+    if (!def?.sim) continue
+    const { role, outputPin, inputPin } = def.sim
+
+    if (outputPin && (role === 'led' || role === 'buzzer' || role === 'generic_output')) {
+      const boardPinId = findBoardGpio(project, `${c.instance}.${outputPin}`)
+      if (!boardPinId) continue
+      const label = board.pins.find((p) => p.id === boardPinId)?.label
+      if (label && simGpios[label]) lit.add(c.instance)
+    }
+
+    if (inputPin && (role === 'button' || role === 'generic_input')) {
+      const boardPinId = findBoardGpio(project, `${c.instance}.${inputPin}`)
+      if (boardPinId) {
+        active.add(c.instance)
+        const label = board.pins.find((p) => p.id === boardPinId)?.label
+        if (label && simGpios[label]) lit.add(c.instance)
+      }
+    }
   }
-  return out
+
+  return { lit, active }
 }

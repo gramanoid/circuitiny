@@ -10,6 +10,7 @@ export type PinType =
   | 'i2c_sda' | 'i2c_scl'
   | 'spi_mosi' | 'spi_miso' | 'spi_sck' | 'spi_cs'
   | 'uart_tx' | 'uart_rx'
+  | 'i2s_bclk' | 'i2s_lrclk' | 'i2s_din' | 'i2s_dout'
   | 'pwm' | 'nc'
 
 export interface ComponentInstance {
@@ -73,6 +74,7 @@ export interface Project {
   behaviors: Behavior[]
   app: AppConfig
   drcOverrides?: string[]      // warning ids the user has dismissed
+  customCode?: Record<string, string>  // file path → content, set by agent
 }
 
 export const emptyProject = (

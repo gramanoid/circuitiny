@@ -26,6 +26,7 @@ const rules: Rule[] = [
   ruleStrappingPin,
   ruleLedWithoutResistor,
   ruleLedResistorTooLow,
+  ruleI2sDirectionMismatch,
 ]
 
 export function runDrc(project: Project): { errors: Violation[]; warnings: Violation[] } {
@@ -58,6 +59,7 @@ function ruleInputOnlyOutput(project: Project): Violation[] {
     if (!bp) continue
     const types = netTypes(project, net)
     const drives = types.includes('digital_out') || types.includes('analog_out') || types.includes('pwm')
+      || types.includes('i2s_bclk') || types.includes('i2s_lrclk') || types.includes('i2s_dout')
     const boardPinLabel = board.pins.find((p) => p.id === bp)?.label
     const isInputOnly = boardPinLabel && board.inputOnlyPins.includes('GPIO' + boardPinLabel)
     if (drives && isInputOnly) {
@@ -261,6 +263,24 @@ function ruleLedWithoutResistor(project: Project): Violation[] {
 const VCC = 3.3
 const VF_TYPICAL = 2.0   // conservative Vf assumption
 const MAX_CURRENT_MA = 30
+
+// I2S: a single net cannot carry both a data-in (to MCU) and a data-out (from MCU);
+// those are opposite-direction signals and must stay on separate wires.
+function ruleI2sDirectionMismatch(project: Project): Violation[] {
+  const out: Violation[] = []
+  for (const net of project.nets) {
+    const types = netTypes(project, net)
+    if (types.includes('i2s_din') && types.includes('i2s_dout')) {
+      out.push({
+        id: 'i2s.direction_mismatch',
+        severity: 'error',
+        message: 'I2S data-in and data-out tied on the same net — these are opposite-direction signals',
+        involves: net.endpoints
+      })
+    }
+  }
+  return out
+}
 
 function ruleLedResistorTooLow(project: Project): Violation[] {
   const out: Violation[] = []

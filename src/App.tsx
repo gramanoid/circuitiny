@@ -10,6 +10,7 @@ import Palette from './panes/Palette'
 import BoardPicker from './panes/BoardPicker'
 import { useStore } from './store'
 import { hydrateCatalog } from './catalog/hydrate'
+import { useSimLoop } from './sim/useSimLoop'
 
 export default function App() {
   const mode = useStore((s) => s.mode)
@@ -18,6 +19,8 @@ export default function App() {
   const showBoardPicker = useStore((s) => s.showBoardPicker)
   const openBoardPicker = useStore((s) => s.openBoardPicker)
   const projectName = useStore((s) => s.project.name)
+
+  useSimLoop()
 
   useEffect(() => {
     hydrateCatalog().then((n) => { if (n > 0) bump() }).catch(() => { /* ignore */ })

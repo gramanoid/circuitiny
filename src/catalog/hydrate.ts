@@ -1,7 +1,23 @@
 // Loads user-added components from ~/.esp-ai/catalog/ into the in-memory catalog.
 
 import { catalog } from './index'
-import type { ComponentDef } from '../project/component'
+import type { ComponentDef, SchematicSymbolSpec, SchematicSymbol, SimDef } from '../project/component'
+
+// Heuristic fallback for user catalog entries whose component.json predates
+// the `schematic.symbol` field.
+function inferSchematic(id: string): SchematicSymbolSpec {
+  const lower = id.toLowerCase()
+  const match: [string, SchematicSymbol][] = [
+    ['resistor', 'resistor'], ['capacitor', 'capacitor'], ['speaker', 'speaker'],
+    ['mic', 'microphone'], ['led-strip', 'ledstrip'], ['ws2812', 'ledstrip'],
+    ['led', 'led'], ['button', 'button'], ['switch', 'button'],
+    ['pot', 'potentiometer'], ['oled', 'display'], ['display', 'display'],
+    ['servo', 'motor'], ['motor', 'motor'], ['relay', 'relay'],
+    ['pir', 'sensor'], ['dht', 'sensor'], ['mpu', 'ic'], ['imu', 'ic']
+  ]
+  for (const [needle, symbol] of match) if (lower.includes(needle)) return { symbol }
+  return { symbol: 'generic-rect' }
+}
 
 export async function hydrateCatalog(): Promise<number> {
   if (!window.espAI?.listCatalog) return 0
@@ -22,7 +38,8 @@ export async function hydrateCatalog(): Promise<number> {
         type: p.type ?? 'digital_io',
         position: p.position, normal: p.normal ?? [0, 1, 0]
       })),
-      schematic: { autoGenerate: true }
+      schematic: j.schematic ?? inferSchematic(j.id),
+      ...(j.sim ? { sim: j.sim as SimDef } : {})
     }
     catalog.registerComponent(def, e.glbData)
     n++

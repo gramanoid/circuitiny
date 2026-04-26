@@ -19,7 +19,14 @@ export function initialGpios(project: Project): Record<string, boolean> {
 }
 
 // Map a target reference ("instance.pin") to its bound board pin label, or null.
-function targetBoardPin(project: Project, target: string): string | null {
+// Walks through passive components (2-pin, e.g. resistors) transparently.
+function targetBoardPin(
+  project: Project,
+  target: string,
+  visited = new Set<string>()
+): string | null {
+  if (visited.has(target)) return null
+  visited.add(target)
   const board = catalog.getBoard(project.board)
   if (!board) return null
   if (target.startsWith('board.')) {
@@ -28,10 +35,27 @@ function targetBoardPin(project: Project, target: string): string | null {
   }
   const net = project.nets.find((n) => n.endpoints.includes(target))
   if (!net) return null
-  const boardEp = net.endpoints.find((e) => e.startsWith('board.'))
-  if (!boardEp) return null
-  const pid = boardEp.split('.')[1]
-  return board.pins.find((p) => p.id === pid)?.label ?? null
+  for (const ep of net.endpoints) {
+    if (ep === target) continue
+    if (ep.startsWith('board.')) {
+      const pid = ep.split('.')[1]
+      return board.pins.find((p) => p.id === pid)?.label ?? null
+    }
+    // Cross through passive components (exactly 2 pins, e.g. resistors)
+    const [inst] = ep.split('.')
+    const comp = project.components.find((c) => c.instance === inst)
+    if (!comp) continue
+    const def = catalog.getComponent(comp.componentId)
+    if (!def || def.pins.length !== 2) continue
+    for (const p of def.pins) {
+      const other = `${inst}.${p.id}`
+      if (other !== ep) {
+        const result = targetBoardPin(project, other, visited)
+        if (result) return result
+      }
+    }
+  }
+  return null
 }
 
 function runActions(
@@ -69,38 +93,56 @@ function runActions(
   }
 }
 
+export interface GpioEdge {
+  label: string
+  type: 'rising' | 'falling'
+}
+
 // Advance the simulation by dtMs starting from (prevTime, prevGpios).
 // "boot" triggers fire when prevTime === 0.
+// externalEdges: typed edge events this tick (from UI button press/release).
 export function stepBehaviors(
   project: Project,
   prevTime: number,
   prevGpios: Record<string, boolean>,
-  dtMs: number
+  dtMs: number,
+  externalEdges: GpioEdge[] = []
 ): SimStep {
   const gpios = { ...prevGpios }
   const logs: string[] = []
   const newTime = prevTime + dtMs
 
   for (const beh of project.behaviors) {
-    if (firesInWindow(beh, prevTime, newTime)) {
+    if (firesInWindow(beh, prevTime, newTime, project, externalEdges)) {
       runActions(project, beh.actions, gpios, logs, beh.id)
     }
   }
   return { gpios, logs }
 }
 
-function firesInWindow(beh: Behavior, prev: number, next: number): boolean {
+function firesInWindow(
+  beh: Behavior,
+  prev: number,
+  next: number,
+  project: Project,
+  edges: GpioEdge[]
+): boolean {
   const t = beh.trigger
   switch (t.type) {
     case 'boot':
       return prev === 0
     case 'timer': {
       if (t.period_ms <= 0) return false
-      // Fires when a new period boundary has been crossed in (prev, next].
       return Math.floor(next / t.period_ms) > Math.floor(prev / t.period_ms)
     }
+    case 'gpio_edge': {
+      if (edges.length === 0) return false
+      const boardPin = targetBoardPin(project, t.source)
+      if (!boardPin) return false
+      // Fire once per matching edge entry (not deduplicated — each press counts).
+      return edges.some((e) => e.label === boardPin && e.type === (t.edge ?? 'rising'))
+    }
     default:
-      // gpio_edge / sensor_threshold / mqtt / http / wifi not simulated in v0
       return false
   }
 }

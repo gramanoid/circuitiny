@@ -2,7 +2,7 @@
 // Tool schema differs from OpenAI: uses `input_schema` instead of `parameters`,
 // and tool results are `user` messages with a `tool_result` content block.
 
-import { tools, execTool } from './tools'
+import { tools, execTool, makeExecContext } from './tools'
 import type { Msg, AgentCallbacks, ProviderConfig } from './types'
 
 // Convert our OpenAI-format tool list to Anthropic format.
@@ -70,27 +70,38 @@ export async function chatAnthropic(
 ): Promise<void> {
   const baseUrl = cfg.baseUrl ?? 'https://api.anthropic.com'
   const maxLoops = cfg.maxToolLoops ?? 16
+  const signal = cfg.signal
+  const execCtx = makeExecContext(signal)
 
   for (let loop = 0; loop < maxLoops; loop++) {
+    if (signal?.aborted) { cb.onError('aborted'); return }
     const { system, messages } = toAnthropicMessages(conv)
 
-    const resp = await fetch(`${baseUrl}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': cfg.apiKey ?? '',
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: cfg.model,
-        max_tokens: 4096,
-        system: system || undefined,
-        messages,
-        tools: anthropicTools,
-        stream: true,
-      }),
-    })
+    let resp: Response
+    try {
+      resp = await fetch(`${baseUrl}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': cfg.apiKey ?? '',
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: cfg.model,
+          max_tokens: 8192,
+          system: system || undefined,
+          messages,
+          tools: anthropicTools,
+          stream: true,
+        }),
+        signal,
+      })
+    } catch (e: any) {
+      if (signal?.aborted || e?.name === 'AbortError') { cb.onError('aborted'); return }
+      cb.onError(`Anthropic fetch error: ${e?.message ?? String(e)}`)
+      return
+    }
     if (!resp.ok || !resp.body) {
       cb.onError(`Anthropic error ${resp.status}: ${await resp.text().catch(() => '')}`)
       return
@@ -103,6 +114,7 @@ export async function chatAnthropic(
     // Map block index → partial tool_use data
     const toolBlocks: Record<number, { id: string; name: string; args: string }> = {}
 
+    try {
     outer: while (true) {
       const { done, value } = await reader.read()
       if (done) break
@@ -133,6 +145,11 @@ export async function chatAnthropic(
         }
       }
     }
+    } catch (e: any) {
+      if (signal?.aborted || e?.name === 'AbortError') { cb.onError('aborted'); return }
+      cb.onError(`Anthropic stream error: ${e?.message ?? String(e)}`)
+      return
+    }
 
     const toolCalls = Object.values(toolBlocks).length > 0
       ? Object.values(toolBlocks).map((tb) => ({
@@ -148,9 +165,10 @@ export async function chatAnthropic(
     if (!toolCalls?.length) return
 
     for (const call of toolCalls) {
+      if (signal?.aborted) { cb.onError('aborted'); return }
       const name = call.function.name
       const args = call.function.arguments ?? {}
-      const result = await execTool(name, args)
+      const result = await execTool(name, args, execCtx)
       cb.onToolCall(name, args, result)
       const toolMsg: Msg = {
         role: 'tool', tool_name: name, name, tool_call_id: call.id,

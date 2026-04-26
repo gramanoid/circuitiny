@@ -1,9 +1,13 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
+import { marked } from 'marked'
 import { chat } from '../agent/chat'
 import type { Msg } from '../agent/types'
 import { PROVIDER_DEFAULTS, type ProviderType } from '../agent/types'
+import { loadChatHistory, saveChatHistory, clearChatHistory } from '../agent/chatSession'
+import { useStore } from '../store'
 
-const LS_KEY = 'esp-ai:provider-cfg'
+const LS_KEY     = 'esp-ai:provider-cfg'
+const LS_EXPERT  = 'esp-ai:expert-mode'
 
 function loadCfg() {
   try { return JSON.parse(localStorage.getItem(LS_KEY) ?? '{}') } catch { return {} }
@@ -19,17 +23,35 @@ const PROVIDER_MODELS: Record<ProviderType, string[]> = {
 
 export default function ChatPane() {
   const saved = loadCfg()
-  const [provider, setProvider] = useState<ProviderType>(saved.provider ?? 'ollama')
-  const [model, setModel]       = useState<string>(saved.model ?? PROVIDER_DEFAULTS.ollama.defaultModel)
-  const [apiKey, setApiKey]     = useState<string>(saved.apiKey ?? '')
-  const [baseUrl, setBaseUrl]   = useState<string>(saved.baseUrl ?? '')
-  const [showCfg, setShowCfg]   = useState(false)
+  const [provider, setProvider]     = useState<ProviderType>(saved.provider ?? 'ollama')
+  const [model, setModel]           = useState<string>(saved.model ?? PROVIDER_DEFAULTS.ollama.defaultModel)
+  const [apiKey, setApiKey]         = useState<string>(saved.apiKey ?? '')
+  const [baseUrl, setBaseUrl]       = useState<string>(saved.baseUrl ?? '')
+  const [showCfg, setShowCfg]       = useState(false)
+  const [expertMode, setExpertMode] = useState<boolean>(() => localStorage.getItem(LS_EXPERT) === 'true')
 
-  const [msgs, setMsgs]   = useState<Msg[]>([])
+  const projectName = useStore((s) => s.project.name)
+
+  // DisplayMsg adds an optional _sid marker used only during streaming to
+  // identify the in-progress bubble. It is stripped before saving to history.
+  type DisplayMsg = Msg & { _sid?: string }
+
+  const [msgs, setMsgs]   = useState<DisplayMsg[]>(() => loadChatHistory(projectName))
   const [input, setInput] = useState('')
   const [busy, setBusy]   = useState(false)
   const scroller          = useRef<HTMLDivElement>(null)
-  const streamIdx         = useRef<number | null>(null)
+  const streamSid         = useRef<string | null>(null)   // set in onToken body, not inside updater
+  const abortRef          = useRef<AbortController | null>(null)
+
+  // Load history when project switches
+  useEffect(() => {
+    setMsgs(loadChatHistory(projectName))
+  }, [projectName])
+
+  // Persist history whenever messages change (strip streaming markers before saving)
+  useEffect(() => {
+    saveChatHistory(projectName, msgs.map(({ _sid: _, ...m }) => m))
+  }, [projectName, msgs])
 
   useEffect(() => { scroller.current?.scrollTo({ top: 9e9 }) }, [msgs])
 
@@ -56,43 +78,76 @@ export default function ChatPane() {
     saveCfg({ provider, model, apiKey, baseUrl: u })
   }
 
+  function toggleExpert() {
+    const next = !expertMode
+    setExpertMode(next)
+    localStorage.setItem(LS_EXPERT, String(next))
+    setMsgs([])  // reset conversation when switching modes
+  }
+
   const defaults = PROVIDER_DEFAULTS[provider]
+
+  function stop() {
+    abortRef.current?.abort()
+  }
 
   async function send() {
     const text = input.trim()
     if (!text || busy) return
     setInput('')
     setBusy(true)
-    const hist = [...msgs]
-    streamIdx.current = null
+    // Strip internal _sid markers before sending history to the model.
+    const hist: Msg[] = msgs.map(({ _sid: _, ...m }) => m)
+    streamSid.current = null
+    const ac = new AbortController()
+    abortRef.current = ac
     try {
       await chat(hist, text, {
-        onMessage: (m) => setMsgs((prev) => {
-          if (m.role === 'assistant' && streamIdx.current !== null) {
-            const next = prev.slice(); next[streamIdx.current] = m; streamIdx.current = null; return next
-          }
-          return [...prev, m]
-        }),
-        onToken: (delta) => setMsgs((prev) => {
-          if (streamIdx.current === null) {
-            streamIdx.current = prev.length
-            return [...prev, { role: 'assistant', content: delta }]
-          }
-          const next = prev.slice(); const i = streamIdx.current
-          next[i] = { ...next[i], content: next[i].content + delta }
-          return next
-        }),
+        onToken: (delta) => {
+          // Assign the streaming session ID here (outside the updater) so the
+          // updater stays a pure function — safe for React concurrent re-runs.
+          if (streamSid.current === null) streamSid.current = `s${Date.now()}`
+          const sid = streamSid.current
+          setMsgs((prev) => {
+            const idx = prev.findIndex((m) => m._sid === sid)
+            if (idx === -1) return [...prev, { role: 'assistant', content: delta, _sid: sid }]
+            const next = prev.slice()
+            next[idx] = { ...next[idx], content: next[idx].content + delta }
+            return next
+          })
+        },
+        onMessage: (m) => {
+          const sid = streamSid.current
+          if (m.role === 'assistant') streamSid.current = null
+          setMsgs((prev) => {
+            if (m.role === 'assistant' && sid) {
+              const idx = prev.findIndex((msg) => msg._sid === sid)
+              if (idx !== -1) {
+                const next = prev.slice()
+                next[idx] = m   // replace streaming bubble with final message (no _sid)
+                return next
+              }
+            }
+            return [...prev, m]
+          })
+        },
         onToolCall: () => {},
-        onError: (err) => setMsgs((prev) => [...prev, { role: 'assistant', content: `⚠ ${err}` }])
+        onError: (err) => setMsgs((prev) => [
+          ...prev,
+          { role: 'assistant', content: err === 'aborted' ? '⏸ stopped' : `⚠ ${err}` },
+        ]),
       }, {
         provider,
         model,
         apiKey: apiKey || undefined,
         baseUrl: baseUrl || defaults.baseUrl,
+        expertMode,
+        signal: ac.signal,
       })
     } finally {
       setBusy(false)
-      streamIdx.current = null
+      streamSid.current = null
+      abortRef.current = null
     }
   }
 
@@ -118,6 +173,23 @@ export default function ChatPane() {
                 style={{ ...inputStyle, flex: 1, minWidth: 0 }}>
           {PROVIDER_MODELS[provider].map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
+
+        <button onClick={toggleExpert}
+                title={expertMode ? 'Expert mode ON — click to disable' : 'Enable expert mode (deep research loop)'}
+                style={{ background: expertMode ? '#0d2a1a' : 'none',
+                         border: `1px solid ${expertMode ? '#2ecc71' : '#333'}`,
+                         borderRadius: 3, padding: '2px 6px', fontSize: 10, cursor: 'pointer',
+                         color: expertMode ? '#2ecc71' : '#666', fontWeight: expertMode ? 700 : 400 }}>
+          Expert
+        </button>
+
+        <button onClick={() => { clearChatHistory(projectName); setMsgs([]) }}
+                title="Clear chat history"
+                style={{ background: 'none', border: '1px solid #333',
+                         borderRadius: 3, padding: '2px 6px', fontSize: 10, cursor: 'pointer',
+                         color: '#666' }}>
+          ✕
+        </button>
 
         <button onClick={() => setShowCfg((v) => !v)}
                 title="API key / endpoint"
@@ -153,7 +225,9 @@ export default function ChatPane() {
       <div ref={scroller} style={{ flex: 1, overflow: 'auto', padding: 8, fontSize: 11 }}>
         {msgs.length === 0 && (
           <div style={{ color: '#666', fontStyle: 'italic' }}>
-            Try: "Add an LED and wire it to GPIO4 with ground", then "run DRC".
+            {expertMode
+              ? 'Expert mode: describe your goal and the agent will research, plan, and wire the circuit autonomously.'
+              : 'Try: "Add an LED and wire it to GPIO4 with ground", then "run DRC".'}
           </div>
         )}
         {msgs.map((m, i) => <Message key={i} m={m} />)}
@@ -168,18 +242,30 @@ export default function ChatPane() {
                placeholder="ask the agent…"
                style={{ flex: 1, background: '#1a1a1a', color: '#ddd', border: '1px solid #333',
                         borderRadius: 3, padding: '6px 8px', fontSize: 12 }} />
-        <button onClick={send} disabled={busy || !input.trim()}
-                style={{ background: '#2a3140', color: '#ddd', border: '1px solid #4a90d9',
-                         borderRadius: 3, padding: '4px 12px', fontSize: 12, cursor: 'pointer' }}>
-          Send
-        </button>
+        {busy ? (
+          <button onClick={stop}
+                  style={{ background: '#402a2a', color: '#ddd', border: '1px solid #d94a4a',
+                           borderRadius: 3, padding: '4px 12px', fontSize: 12, cursor: 'pointer' }}>
+            Stop
+          </button>
+        ) : (
+          <button onClick={send} disabled={!input.trim()}
+                  style={{ background: '#2a3140', color: '#ddd', border: '1px solid #4a90d9',
+                           borderRadius: 3, padding: '4px 12px', fontSize: 12, cursor: 'pointer' }}>
+            Send
+          </button>
+        )}
       </div>
     </div>
   )
 }
 
 function Message({ m }: { m: Msg }) {
+  const [thinkOpen, setThinkOpen] = useState(false)
+
   if (m.role === 'tool') {
+    // think results carry no user-visible information — suppress them
+    if (m.tool_name === 'think') return null
     let parsed: any = null; try { parsed = JSON.parse(m.content) } catch {}
     return (
       <div style={{ margin: '3px 0', padding: 4, background: '#161616', border: '1px solid #2a2a2a',
@@ -191,20 +277,45 @@ function Message({ m }: { m: Msg }) {
       </div>
     )
   }
+
   if (m.tool_calls?.length) {
+    const thinkCall = m.tool_calls.find((c) => c.function.name === 'think')
+    const otherCalls = m.tool_calls.filter((c) => c.function.name !== 'think')
     return (
-      <div style={{ margin: '3px 0', color: '#d0b3ff', fontSize: 10 }}>
-        → calling {m.tool_calls.map((c) => c.function.name).join(', ')}
+      <div style={{ margin: '3px 0', fontSize: 10 }}>
+        {thinkCall && (
+          <div style={{ marginBottom: 2 }}>
+            <button onClick={() => setThinkOpen((v) => !v)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer',
+                             color: '#7a9', fontSize: 10, padding: 0 }}>
+              {thinkOpen ? '▾' : '▸'} reasoning…
+            </button>
+            {thinkOpen && (
+              <div style={{ marginTop: 3, padding: '5px 8px', background: '#0d1f0d',
+                            border: '1px solid #1a3a1a', borderRadius: 3,
+                            color: '#7fb87a', whiteSpace: 'pre-wrap', fontSize: 10 }}>
+                {thinkCall.function.arguments?.reasoning ?? ''}
+              </div>
+            )}
+          </div>
+        )}
+        {otherCalls.length > 0 && (
+          <div style={{ color: '#d0b3ff' }}>
+            → calling {otherCalls.map((c) => c.function.name).join(', ')}
+          </div>
+        )}
       </div>
     )
   }
+
   const bg = m.role === 'user' ? '#1f2a40' : '#1a1a1a'
   const tag = m.role === 'user' ? 'you' : 'agent'
+  const html = useMemo(() => marked.parse(m.content, { async: false }) as string, [m.content])
   return (
     <div style={{ margin: '4px 0', padding: '6px 8px', background: bg,
-                  borderRadius: 3, border: '1px solid #2a2a2a', whiteSpace: 'pre-wrap' }}>
-      <div style={{ fontSize: 9, color: '#888', marginBottom: 2 }}>{tag}</div>
-      {m.content}
+                  borderRadius: 3, border: '1px solid #2a2a2a' }}>
+      <div style={{ fontSize: 9, color: '#888', marginBottom: 4 }}>{tag}</div>
+      <div className="md" dangerouslySetInnerHTML={{ __html: html }} />
     </div>
   )
 }

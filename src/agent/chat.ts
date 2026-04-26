@@ -4,12 +4,15 @@ import type { Msg, AgentCallbacks, ProviderConfig } from './types'
 import { chatAnthropic } from './anthropic'
 import { chatOpenAI } from './openai'
 import { chat as chatOllama } from './ollama'
+import { EXPERT_SYSTEM_PROMPT } from './expertPrompt'
 
 export const SYSTEM = `You are an ESP32 design copilot for hobbyists. The user has a 3D board viewer.
 You manipulate the project by calling tools — never describe code or pin assignments in prose when you could just call the tool.
 
 Workflow rule: when asked to add parts or wire things, call list_catalog first if you haven't yet, then add_component, then connect using exact pin refs like "led1.anode" and "board.gpio4".
 After wiring changes, call run_drc to verify. Keep replies to the user short and focused.
+
+Firmware rule: when the user asks for firmware, application code, or "make it work", call get_project first to read the current wiring, then call write_firmware with complete, compilable ESP-IDF C code for "main/app_main.c". Include all required headers, GPIO/I2C init, and the app_main function. The code appears instantly in the Code pane. Always write real working code — never refuse or say you lack the capability. Once write_firmware returns { ok: true }, stop calling tools and reply to the user with a one-line summary — do not call run_drc or get_project after writing firmware.
 
 Electronics safety rules — apply these automatically without waiting for the user to ask:
 - LED (any colour): always add a current-limiting resistor (220 Ω–470 Ω for 3.3 V GPIO) in series between the GPIO and the anode. Wire: board.gpioX → resistor.in → resistor.out → led.anode → led.cathode → board.GND.
@@ -27,24 +30,34 @@ export async function chat(
   cb: AgentCallbacks,
   cfg: ProviderConfig
 ): Promise<Msg[]> {
+  const systemPrompt = cfg.expertMode ? EXPERT_SYSTEM_PROMPT : SYSTEM
+  const effectiveCfg: ProviderConfig = cfg.expertMode
+    ? { ...cfg, maxToolLoops: cfg.maxToolLoops ?? 48 }
+    : cfg
+
   const conv: Msg[] = [
-    ...(history.length === 0 ? [{ role: 'system' as const, content: SYSTEM }] : []),
+    ...(history.length === 0 ? [{ role: 'system' as const, content: systemPrompt }] : []),
     ...history,
     { role: 'user', content: userMessage },
   ]
   cb.onMessage({ role: 'user', content: userMessage })
 
-  switch (cfg.provider) {
+  switch (effectiveCfg.provider) {
     case 'anthropic':
-      await chatAnthropic(conv, cfg, cb)
+      await chatAnthropic(conv, effectiveCfg, cb)
       break
     case 'openai':
     case 'openrouter':
-      await chatOpenAI(conv, cfg, cb)
+      await chatOpenAI(conv, effectiveCfg, cb)
       break
     case 'ollama':
     default:
-      await chatOllama(history, userMessage, cb, { model: cfg.model, host: cfg.baseUrl, maxToolLoops: cfg.maxToolLoops })
+      await chatOllama(history, userMessage, cb, {
+        model: effectiveCfg.model,
+        host: effectiveCfg.baseUrl,
+        maxToolLoops: effectiveCfg.maxToolLoops,
+        signal: effectiveCfg.signal,
+      })
       return conv  // ollama manages its own conv copy
   }
 

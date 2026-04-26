@@ -86,7 +86,7 @@ export default function CatalogEditor3D() {
   }
 
   return (
-    <Canvas shadows camera={{ position: [0.12, 0.1, 0.12], fov: 40, near: 0.001, far: 10 }} style={{ background: '#0e0e0e' }}>
+    <Canvas shadows camera={{ position: [0.12, 0.1, 0.12], fov: 40, near: 0.001, far: 10 }} style={{ background: '#F2F7F2' }}>
       <Suspense fallback={null}>
         <ambientLight intensity={0.5} />
         <directionalLight position={[0.2, 0.3, 0.2]} intensity={1.2} />

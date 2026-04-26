@@ -3,6 +3,8 @@ import { useStore } from '../store'
 import { catalog, pinColor } from '../catalog'
 import { netColor } from '../project/pins'
 import type { PinType } from '../project/schema'
+import { resolveSchematicSymbol, type SchematicSymbol } from '../project/component'
+import { SchematicSymbolGlyph, symbolPinAnchors } from './schematicSymbols'
 
 const PIN_PITCH = 20
 const BOARD_W = 180
@@ -103,12 +105,9 @@ export default function Schematic() {
       {/* Component bodies */}
       {comps.map((c) => (
         <g key={c.instance}>
-          <rect x={c.x} y={c.y} width={c.w} height={c.h}
-                fill="#2a1f1a" stroke="#d98b4a" strokeWidth={1.5} rx={4} />
-          <text x={c.x + c.w / 2} y={c.y + 14} fill="#ddb088" fontSize={10}
-                textAnchor="middle" fontFamily="SF Mono, monospace">{c.instance}</text>
-          <text x={c.x + c.w / 2} y={c.y + 26} fill="#886655" fontSize={8}
-                textAnchor="middle" fontFamily="SF Mono, monospace">{c.componentName}</text>
+          <SchematicSymbolGlyph symbol={c.symbol} instance={c.instance}
+                                componentName={c.componentName}
+                                x={c.x} y={c.y} w={c.w} h={c.h} />
         </g>
       ))}
 
@@ -138,8 +137,9 @@ export default function Schematic() {
 
       {/* Pin anchors */}
       {[...pins.values()].map((p) => {
-        const stub = p.side === 'left' ? -10 : 10
-        const textX = p.side === 'left' ? p.x - 16 : p.x + 16
+        const sideSign = p.side === 'left' ? -1 : 1
+        const stub = sideSign * 10
+        const textX = p.x + sideSign * 16
         const anchor = p.side === 'left' ? 'end' : 'start'
         const isPending = pending === p.ref
         return (
@@ -165,7 +165,7 @@ export default function Schematic() {
 interface Layout {
   pins: Map<string, PinNode>
   board: { x: number; y: number; w: number; h: number; label: string }
-  comps: { instance: string; componentName: string; x: number; y: number; w: number; h: number }[]
+  comps: { instance: string; componentName: string; symbol: SchematicSymbol; x: number; y: number; w: number; h: number }[]
   viewW: number
   viewH: number
 }
@@ -201,17 +201,19 @@ function computeLayout(project: ReturnType<typeof useStore.getState>['project'])
   for (const inst of project.components) {
     const def = catalog.getComponent(inst.componentId)
     if (!def) continue
+    const symbol = resolveSchematicSymbol(def.schematic)
     const h = def.pins.length * PIN_PITCH + 34
-    comps.push({
-      instance: inst.instance, componentName: def.name,
-      x: COMP_X, y: cy, w: COMP_W, h
-    })
+    const box = { x: COMP_X, y: cy, w: COMP_W, h }
+    comps.push({ instance: inst.instance, componentName: def.name, symbol, ...box })
+    const anchors = symbolPinAnchors(symbol, box, def.pins.map((p) => p.id))
     def.pins.forEach((p, i) => {
+      const a = anchors.get(p.id)
       pins.set(`${inst.instance}.${p.id}`, {
         ref: `${inst.instance}.${p.id}`,
-        x: COMP_X,
-        y: cy + 34 + i * PIN_PITCH,
-        side: 'left', type: p.type, label: p.label
+        x: a ? a.x : COMP_X,
+        y: a ? a.y : cy + 34 + i * PIN_PITCH,
+        side: a ? a.side : 'left',
+        type: p.type, label: p.label
       })
     })
     cy += h + COMP_GAP

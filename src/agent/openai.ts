@@ -1,7 +1,7 @@
 // OpenAI-compatible chat client (works for OpenAI and OpenRouter).
 // Streams SSE chunks; iterates tool calls until the model stops.
 
-import { tools, execTool } from './tools'
+import { tools, execTool, makeExecContext } from './tools'
 import type { Msg, AgentCallbacks, ProviderConfig } from './types'
 
 export async function chatOpenAI(
@@ -11,6 +11,8 @@ export async function chatOpenAI(
 ): Promise<void> {
   const baseUrl = cfg.baseUrl ?? 'https://api.openai.com/v1'
   const maxLoops = cfg.maxToolLoops ?? 16
+  const signal = cfg.signal
+  const execCtx = makeExecContext(signal)
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${cfg.apiKey ?? ''}`,
@@ -21,17 +23,26 @@ export async function chatOpenAI(
   }
 
   for (let loop = 0; loop < maxLoops; loop++) {
-    const resp = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model: cfg.model,
-        messages: conv,
-        tools,
-        tool_choice: 'auto',
-        stream: true,
-      }),
-    })
+    if (signal?.aborted) { cb.onError('aborted'); return }
+    let resp: Response
+    try {
+      resp = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: cfg.model,
+          messages: conv,
+          tools,
+          tool_choice: 'auto',
+          stream: true,
+        }),
+        signal,
+      })
+    } catch (e: any) {
+      if (signal?.aborted || e?.name === 'AbortError') { cb.onError('aborted'); return }
+      cb.onError(`${cfg.provider} fetch error: ${e?.message ?? String(e)}`)
+      return
+    }
     if (!resp.ok || !resp.body) {
       cb.onError(`${cfg.provider} error ${resp.status}: ${await resp.text().catch(() => '')}`)
       return
@@ -43,6 +54,7 @@ export async function chatOpenAI(
     let acc = ''
     const toolCallAccum: Record<number, { id: string; name: string; args: string }> = {}
 
+    try {
     outer: while (true) {
       const { done, value } = await reader.read()
       if (done) break
@@ -68,6 +80,11 @@ export async function chatOpenAI(
         }
       }
     }
+    } catch (e: any) {
+      if (signal?.aborted || e?.name === 'AbortError') { cb.onError('aborted'); return }
+      cb.onError(`${cfg.provider} stream error: ${e?.message ?? String(e)}`)
+      return
+    }
 
     const toolCalls = Object.values(toolCallAccum).length > 0
       ? Object.values(toolCallAccum).map((tc) => ({
@@ -83,9 +100,10 @@ export async function chatOpenAI(
     if (!toolCalls?.length) return
 
     for (const call of toolCalls) {
+      if (signal?.aborted) { cb.onError('aborted'); return }
       const name = call.function.name
       const args = call.function.arguments ?? {}
-      const result = await execTool(name, args)
+      const result = await execTool(name, args, execCtx)
       cb.onToolCall(name, args, result)
       const toolMsg: Msg = {
         role: 'tool', tool_name: name, name, tool_call_id: call.id,
