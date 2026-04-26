@@ -77,14 +77,23 @@ export interface Project {
   customCode?: Record<string, string>  // file path → content, set by agent
 }
 
+// Authoritative board→target map. Kept here (not imported from catalog) to avoid
+// a circular dep: catalog imports schema, not the other way around.
+const BOARD_TARGETS: Record<string, Target> = {
+  'esp32-devkitc-v4':    'esp32',
+  'esp32s3-devkitc-1':   'esp32s3',
+  'esp32c3-devkitm-1':   'esp32c3',
+  'esp32c6-devkitc-1':   'esp32c6',
+  'xiao-esp32s3':        'esp32s3',
+}
+
 export const emptyProject = (
   name: string,
   boardId: string = 'esp32-devkitc-v4',
-  target: Target = 'esp32'
 ): Project => ({
   schemaVersion: 1,
   name,
-  target,
+  target: BOARD_TARGETS[boardId] ?? 'esp32',
   board: boardId,
   components: [],
   nets: [],

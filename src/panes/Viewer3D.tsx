@@ -345,7 +345,7 @@ function Nets({ violations }: { violations: Violation[] }) {
 }
 
 const FIXABLE = new Set<string>([
-  'esp32.gpio.input_only', 'esp32.gpio.flash_pin', 'esp32.gpio.strapping'
+  'gpio.input_only', 'gpio.flash_pin', 'gpio.strapping'
 ])
 
 function DrcOverlay({ result }: { result: ReturnType<typeof runDrc> }) {
@@ -546,7 +546,7 @@ function computeSimStates(
     if (!def?.sim) continue
     const { role, outputPin, inputPin } = def.sim
 
-    if (outputPin && (role === 'led' || role === 'buzzer' || role === 'generic_output')) {
+    if (outputPin && (role === 'led' || role === 'buzzer' || role === 'generic_output' || role === 'servo' || role === 'display')) {
       const boardPinId = findBoardGpio(project, `${c.instance}.${outputPin}`)
       if (!boardPinId) continue
       const label = board.pins.find((p) => p.id === boardPinId)?.label

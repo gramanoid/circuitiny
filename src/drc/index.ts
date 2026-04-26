@@ -8,7 +8,7 @@ import { catalog } from '../catalog'
 export type Severity = 'error' | 'warning'
 
 export interface Violation {
-  id: string                 // rule id, e.g. "esp32.gpio.input_only"
+  id: string                 // rule id, e.g. "gpio.input_only"
   severity: Severity
   message: string
   involves: string[]         // pin refs / net ids
@@ -27,6 +27,7 @@ const rules: Rule[] = [
   ruleLedWithoutResistor,
   ruleLedResistorTooLow,
   ruleI2sDirectionMismatch,
+  ruleCurrentBudget,
 ]
 
 export function runDrc(project: Project): { errors: Violation[]; warnings: Violation[] } {
@@ -58,13 +59,16 @@ function ruleInputOnlyOutput(project: Project): Violation[] {
     const bp = netBoardPin(net)
     if (!bp) continue
     const types = netTypes(project, net)
-    const drives = types.includes('digital_out') || types.includes('analog_out') || types.includes('pwm')
+    // 'digital_in' on a component = MCU drives into it (GPIO OUTPUT).
+    // 'digital_out' kept for legacy compat; analog/pwm/i2s signals also drive the pin.
+    const drives = types.includes('digital_in') || types.includes('digital_out')
+      || types.includes('analog_out') || types.includes('pwm')
       || types.includes('i2s_bclk') || types.includes('i2s_lrclk') || types.includes('i2s_dout')
     const boardPinLabel = board.pins.find((p) => p.id === bp)?.label
     const isInputOnly = boardPinLabel && board.inputOnlyPins.includes('GPIO' + boardPinLabel)
     if (drives && isInputOnly) {
       out.push({
-        id: 'esp32.gpio.input_only',
+        id: 'gpio.input_only',
         severity: 'error',
         message: `GPIO${boardPinLabel} is input-only on ${board.name} but is driven as output`,
         involves: net.endpoints,
@@ -85,7 +89,7 @@ function ruleFlashPinUsed(project: Project): Violation[] {
     const label = board.pins.find((p) => p.id === bp)?.label
     if (label && board.flashPins.includes('GPIO' + label)) {
       out.push({
-        id: 'esp32.gpio.flash_pin',
+        id: 'gpio.flash_pin',
         severity: 'error',
         message: `GPIO${label} is reserved for SPI flash — using it externally will brick the board`,
         involves: net.endpoints
@@ -182,7 +186,7 @@ function ruleStrappingPin(project: Project): Violation[] {
     const label = board.pins.find((p) => p.id === bp)?.label
     if (label && board.strappingPins.includes('GPIO' + label)) {
       out.push({
-        id: 'esp32.gpio.strapping',
+        id: 'gpio.strapping',
         severity: 'warning',
         message: `GPIO${label} is a boot strapping pin — driving it at boot can prevent the chip from starting`,
         involves: net.endpoints
@@ -276,6 +280,31 @@ function ruleI2sDirectionMismatch(project: Project): Violation[] {
         severity: 'error',
         message: 'I2S data-in and data-out tied on the same net — these are opposite-direction signals',
         involves: net.endpoints
+      })
+    }
+  }
+  return out
+}
+
+function ruleCurrentBudget(project: Project): Violation[] {
+  const board = catalog.getBoard(project.board)
+  if (!board) return []
+  const drawn: Record<string, number> = {}
+  for (const c of project.components) {
+    const def = catalog.getComponent(c.componentId)
+    if (!def?.power) continue
+    const rail = def.power.rail
+    drawn[rail] = (drawn[rail] ?? 0) + def.power.current_ma
+  }
+  const out: Violation[] = []
+  for (const [rail, ma] of Object.entries(drawn)) {
+    const budget = board.railBudgetMa[rail as keyof typeof board.railBudgetMa]
+    if (budget !== undefined && ma > budget) {
+      out.push({
+        id: `power.over_budget.${rail}`,
+        severity: 'warning',
+        message: `${rail} rail: components draw ${ma} mA total, exceeds board budget of ${budget} mA`,
+        involves: [],
       })
     }
   }

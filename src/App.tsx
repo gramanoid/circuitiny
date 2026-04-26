@@ -18,13 +18,42 @@ export default function App() {
   const bump = useStore((s) => s.bumpCatalog)
   const showBoardPicker = useStore((s) => s.showBoardPicker)
   const openBoardPicker = useStore((s) => s.openBoardPicker)
-  const projectName = useStore((s) => s.project.name)
+  const project = useStore((s) => s.project)
+  const savedPath = useStore((s) => s.savedPath)
+  const dirty = useStore((s) => s.dirty)
+  const loadProject = useStore((s) => s.loadProject)
+  const markSaved = useStore((s) => s.markSaved)
 
   useSimLoop()
 
   useEffect(() => {
     hydrateCatalog().then((n) => { if (n > 0) bump() }).catch(() => { /* ignore */ })
   }, [bump])
+
+  async function handleSave() {
+    if (!window.espAI?.saveProject) return
+    // Always read fresh state — avoids stale closure in keyboard handler
+    const { project: p, savedPath: sp } = useStore.getState()
+    const path = await window.espAI.saveProject(p, p.name, sp ?? undefined)
+    if (path) markSaved(path)
+  }
+
+  async function handleOpen() {
+    if (!window.espAI?.openProject) return
+    const result = await window.espAI.openProject()
+    if (result) loadProject(result.project as import('./project/schema').Project, result.path)
+  }
+
+  // Cmd+S / Ctrl+S — registered once, reads fresh state via getState()
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); handleSave() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const canIO = !!window.espAI?.saveProject
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -34,7 +63,16 @@ export default function App() {
         <button onClick={() => setMode('project')} style={tabStyle(mode === 'project')}>Project</button>
         <button onClick={() => setMode('catalog-editor')} style={tabStyle(mode === 'catalog-editor')}>Catalog Editor</button>
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 11, color: '#555', marginRight: 8 }}>{projectName}</span>
+        <span style={{ fontSize: 11, color: dirty ? '#886633' : '#555', marginRight: 4 }}
+              title={savedPath ?? 'unsaved'}>
+          {project.name}{dirty && ' ●'}
+        </span>
+        {canIO && (
+          <>
+            <button onClick={handleOpen} style={actionStyle} title="Open project (⌘O)">Open</button>
+            <button onClick={handleSave} style={actionStyle} title="Save project (⌘S)">Save</button>
+          </>
+        )}
         <button onClick={openBoardPicker} style={newProjectStyle}>+ New Project</button>
       </nav>
       <div style={{ flex: 1, minHeight: 0 }}>
@@ -116,6 +154,16 @@ const tabStyle = (active: boolean): React.CSSProperties => ({
   border: '1px solid ' + (active ? '#4a90d9' : '#333'),
   borderRadius: 4, padding: '3px 10px', fontSize: 11, cursor: 'pointer'
 })
+
+const actionStyle: React.CSSProperties = {
+  background: 'transparent',
+  color: '#aaa',
+  border: '1px solid #333',
+  borderRadius: 4,
+  padding: '3px 10px',
+  fontSize: 11,
+  cursor: 'pointer',
+}
 
 const newProjectStyle: React.CSSProperties = {
   background: 'transparent',

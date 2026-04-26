@@ -13,6 +13,10 @@ const api = {
   listCatalog: (): Promise<Array<{ id: string; json: any; glbData: Uint8Array | null }>> =>
     ipcRenderer.invoke('listCatalog'),
 
+  saveProject: (project: unknown, suggestedName: string, existingPath?: string): Promise<string | null> =>
+    ipcRenderer.invoke('saveProject', project, suggestedName, existingPath),
+  openProject: (): Promise<{ project: unknown; path: string } | null> =>
+    ipcRenderer.invoke('openProject'),
   projectWrite: (name: string, target: string, files: Record<string, string>): Promise<{ dir: string; target: string }> =>
     ipcRenderer.invoke('projectWrite', name, target, files),
   listSerialPorts: (): Promise<string[]> =>

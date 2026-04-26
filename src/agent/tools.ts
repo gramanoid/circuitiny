@@ -249,6 +249,14 @@ export const tools: ToolDef[] = [
   {
     type: 'function',
     function: {
+      name: 'save_project',
+      description: 'Save the current project to disk. If the project has been saved before it overwrites the existing file silently; otherwise it opens a native save dialog for the user to choose a location. Call this at the end of any session where you made meaningful changes.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'list_glb_models',
       description: 'List all 3D GLB models registered in the system — both built-in boards and catalog components. Use to know which physical models are available.',
       parameters: { type: 'object', properties: {} }
@@ -407,6 +415,15 @@ async function executeInternal(
         }
         s.removeBehavior(id)
         return { ok: true, data: { removed: id } }
+      }
+
+      case 'save_project': {
+        if (!window.espAI?.saveProject) return { ok: false, error: 'save_project is only available in the Electron app.' }
+        const { project: p, savedPath: sp } = useStore.getState()
+        const path = await window.espAI.saveProject(p, p.name, sp ?? undefined)
+        if (!path) return { ok: false, error: 'Save was cancelled by the user.' }
+        useStore.getState().markSaved(path)
+        return { ok: true, data: { savedTo: path } }
       }
 
       case 'think': {

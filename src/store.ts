@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { type Project, emptyProject, type PinType, type Behavior, type Target } from './project/schema'
+import { type Project, emptyProject, type PinType, type Behavior } from './project/schema'
 import { catalog } from './catalog'
 
 export type Mode = 'project' | 'catalog-editor'
@@ -31,6 +31,8 @@ export type PinRef = string  // "instance.pinId" or "board.pinId"
 interface State {
   mode: Mode
   project: Project
+  savedPath: string | null
+  dirty: boolean                // true whenever project has unsaved changes
   showBoardPicker: boolean
   selected: string | null
   pendingPin: PinRef | null
@@ -46,6 +48,8 @@ interface State {
 
   setMode: (m: Mode) => void
   setProject: (p: Project) => void
+  loadProject: (p: Project, path?: string) => void
+  markSaved: (path: string) => void
   openBoardPicker: () => void
   createProject: (name: string, boardId: string) => void
   select: (instance: string | null) => void
@@ -92,6 +96,8 @@ const newDraft = (): CatalogDraft => ({
 export const useStore = create<State>((set) => ({
   mode: 'project',
   project: seed(),
+  savedPath: null,
+  dirty: false,
   showBoardPicker: false,
   selected: null,
   pendingPin: null,
@@ -106,12 +112,16 @@ export const useStore = create<State>((set) => ({
   draft: newDraft(),
 
   setMode: (mode) => set({ mode }),
-  setProject: (project) => set({ project }),
+  setProject: (project) => set({ project, dirty: true }),
+  loadProject: (project, path) => set({
+    project, savedPath: path ?? null, dirty: false,
+    mode: 'project', selected: null, pendingPin: null,
+    simulating: false, simTime: 0, simGpios: {}, simLog: [], pendingEdges: []
+  }),
+  markSaved: (savedPath) => set({ savedPath, dirty: false }),
   openBoardPicker: () => set({ showBoardPicker: true }),
   createProject: (name, boardId) => {
-    const board = catalog.getBoard(boardId)
-    const target = (board?.target ?? 'esp32') as Target
-    set({ project: emptyProject(name || 'untitled', boardId, target), showBoardPicker: false, selected: null, pendingPin: null })
+    set({ project: emptyProject(name || 'untitled', boardId), savedPath: null, dirty: false, showBoardPicker: false, selected: null, pendingPin: null })
   },
   select: (selected) => set({ selected }),
 
@@ -133,13 +143,15 @@ export const useStore = create<State>((set) => ({
     } else {
       nets.push({ id: `net${nets.length + 1}`, endpoints: [a, b] })
     }
-    return { pendingPin: null, project: { ...s.project, nets } }
+    return { pendingPin: null, dirty: true, project: { ...s.project, nets } }
   }),
   cancelWire: () => set({ pendingPin: null }),
   removeNet: (id) => set((s) => ({
+    dirty: true,
     project: { ...s.project, nets: s.project.nets.filter((n) => n.id !== id) }
   })),
   rewireBoardPin: (netId, toBoardPinId) => set((s) => ({
+    dirty: true,
     project: {
       ...s.project,
       nets: s.project.nets.map((n) => n.id !== netId ? n : {
@@ -156,9 +168,9 @@ export const useStore = create<State>((set) => ({
     const names = new Set(s.project.components.map((c) => c.instance))
     let instance = `${base}${n}`
     while (names.has(instance)) { n++; instance = `${base}${n}` }
-    // scatter new components in a line to the right of the board
     const x = 0.04 + (existing * 0.01)
     return {
+      dirty: true,
       project: { ...s.project, components: [...s.project.components, {
         instance, componentId, position: [x, 0.005, 0.02], pinAssignments: {}
       }]},
@@ -166,6 +178,7 @@ export const useStore = create<State>((set) => ({
     }
   }),
   removeComponent: (instance) => set((s) => ({
+    dirty: true,
     project: {
       ...s.project,
       components: s.project.components.filter((c) => c.instance !== instance),
@@ -176,6 +189,7 @@ export const useStore = create<State>((set) => ({
     selected: s.selected === instance ? null : s.selected
   })),
   moveComponent: (instance, position) => set((s) => ({
+    dirty: true,
     project: {
       ...s.project,
       components: s.project.components.map((c) =>
@@ -206,12 +220,14 @@ export const useStore = create<State>((set) => ({
   setSimSpeed: (simSpeed) => set({ simSpeed }),
 
   setCustomCode: (file, code) => set((s) => ({
+    dirty: true,
     project: { ...s.project, customCode: { ...s.project.customCode, [file]: code } }
   })),
 
   addBehavior: () => {
     const id = `beh${Date.now().toString(36)}`
     set((s) => ({
+      dirty: true,
       project: {
         ...s.project,
         behaviors: [...s.project.behaviors, {
@@ -222,9 +238,11 @@ export const useStore = create<State>((set) => ({
     return id
   },
   removeBehavior: (id) => set((s) => ({
+    dirty: true,
     project: { ...s.project, behaviors: s.project.behaviors.filter((b) => b.id !== id) }
   })),
   updateBehavior: (id, patch) => set((s) => ({
+    dirty: true,
     project: {
       ...s.project,
       behaviors: s.project.behaviors.map((b) => b.id === id ? { ...b, ...patch } : b)
@@ -233,6 +251,7 @@ export const useStore = create<State>((set) => ({
   setBehavior: (b) => set((s) => {
     const exists = s.project.behaviors.some((x) => x.id === b.id)
     return {
+      dirty: true,
       project: {
         ...s.project,
         behaviors: exists
@@ -268,7 +287,7 @@ export const useStore = create<State>((set) => ({
 }))
 
 function seed(): Project {
-  const p = emptyProject('blink-button', 'esp32-devkitc-v4', 'esp32')
+  const p = emptyProject('blink-button', 'esp32-devkitc-v4')
 
   p.components.push(
     { instance: 'r1',   componentId: 'resistor-220r', position: [0.033, 0.005,  0.015], pinAssignments: {} },

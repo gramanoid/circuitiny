@@ -207,6 +207,38 @@ ipcMain.handle('idfStart', async (_e, opts: {
   return { runId, cwd: dir, cmd }
 })
 
+// ---- Project save / open ----
+
+ipcMain.handle('saveProject', async (_e, project: unknown, suggestedName: string, existingPath?: string) => {
+  let filePath = existingPath
+  if (!filePath) {
+    const safe = (suggestedName || 'untitled').replace(/[^a-zA-Z0-9_-]/g, '_')
+    const r = await dialog.showSaveDialog({
+      title: 'Save project',
+      defaultPath: join(homedir(), 'esp-ai', `${safe}.espai.json`),
+      filters: [{ name: 'esp-ai project', extensions: ['espai.json'] }]
+    })
+    if (r.canceled || !r.filePath) return null
+    filePath = r.filePath
+  }
+  await mkdir(dirname(filePath), { recursive: true })
+  await writeFile(filePath, JSON.stringify(project, null, 2), 'utf8')
+  return filePath
+})
+
+ipcMain.handle('openProject', async () => {
+  const r = await dialog.showOpenDialog({
+    title: 'Open project',
+    filters: [{ name: 'esp-ai project', extensions: ['espai.json', 'json'] }],
+    properties: ['openFile']
+  })
+  if (r.canceled || !r.filePaths[0]) return null
+  const text = await readFile(r.filePaths[0], 'utf8')
+  const parsed = JSON.parse(text)
+  if (parsed.schemaVersion !== 1) throw new Error('Unsupported project schema version')
+  return { project: parsed, path: r.filePaths[0] }
+})
+
 ipcMain.handle('idfStop', async (_e, runId: string) => {
   const child = runs.get(runId)
   if (!child) return { ok: false, reason: 'not running' }
