@@ -8,10 +8,13 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { randomUUID } from 'crypto'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
+const ICON_PATH = join(__dirname, '../../resources/icon.png')
 const CIRCUITINY_HOME = join(homedir(), '.circuitiny')
 const PROJECTS_ROOT = join(homedir(), 'circuitiny', 'projects')
 // Resolution order: explicit override → IDF's own export.sh env var → standard install location
 const IDF_PATH = process.env.CIRCUITINY_IDF_PATH ?? process.env.IDF_PATH ?? join(homedir(), 'esp', 'esp-idf')
+
+app.setName('Circuitiny')
 
 const runs = new Map<string, ChildProcessWithoutNullStreams>()
 
@@ -22,6 +25,7 @@ function createWindow() {
     width: 1400,
     height: 900,
     title: 'Circuitiny',
+    icon: ICON_PATH,
     webPreferences: {
       preload: join(__dirname, '../preload/preload.mjs'),
       sandbox: false
@@ -32,7 +36,6 @@ function createWindow() {
 
   if (process.env.ELECTRON_RENDERER_URL) {
     win.loadURL(process.env.ELECTRON_RENDERER_URL)
-    win.webContents.openDevTools({ mode: 'detach' })
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'))
   }
@@ -253,7 +256,10 @@ app.on('before-quit', () => {
   for (const child of runs.values()) child.kill('SIGKILL')
 })
 
-app.whenReady().then(createWindow)
+app.whenReady().then(() => {
+  if (process.platform === 'darwin') app.dock.setIcon(ICON_PATH)
+  createWindow()
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

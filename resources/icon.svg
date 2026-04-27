@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1a2a1a"/>
+      <stop offset="100%" stop-color="#0a150a"/>
+    </radialGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="subtleGlow">
+      <feGaussianBlur stdDeviation="1.5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background: dark PCB green -->
+  <rect width="512" height="512" rx="80" fill="url(#bgGrad)"/>
+
+  <!-- Subtle PCB grid lines -->
+  <g opacity="0.06" stroke="#4aaa44" stroke-width="1">
+    <line x1="0" y1="64" x2="512" y2="64"/>
+    <line x1="0" y1="128" x2="512" y2="128"/>
+    <line x1="0" y1="192" x2="512" y2="192"/>
+    <line x1="0" y1="256" x2="512" y2="256"/>
+    <line x1="0" y1="320" x2="512" y2="320"/>
+    <line x1="0" y1="384" x2="512" y2="384"/>
+    <line x1="0" y1="448" x2="512" y2="448"/>
+    <line x1="64" y1="0" x2="64" y2="512"/>
+    <line x1="128" y1="0" x2="128" y2="512"/>
+    <line x1="192" y1="0" x2="192" y2="512"/>
+    <line x1="256" y1="0" x2="256" y2="512"/>
+    <line x1="320" y1="0" x2="320" y2="512"/>
+    <line x1="384" y1="0" x2="384" y2="512"/>
+    <line x1="448" y1="0" x2="448" y2="512"/>
+  </g>
+
+  <!-- === C shape made of PCB traces === -->
+  <!-- Trace color: copper/gold -->
+  <g filter="url(#subtleGlow)" fill="none" stroke="#c8902a" stroke-linecap="round" stroke-linejoin="round">
+
+    <!-- Top horizontal trace -->
+    <line x1="182" y1="136" x2="330" y2="136" stroke-width="22"/>
+
+    <!-- Top-right corner (rounded) -->
+    <path d="M330,136 Q370,136 370,176" stroke-width="22" fill="none"/>
+
+    <!-- Short right side going down from top corner -->
+    <line x1="370" y1="176" x2="370" y2="210" stroke-width="22"/>
+
+    <!-- Top-right arm terminates with a pad -->
+    <circle cx="370" cy="210" r="18" fill="#c8902a" stroke="none"/>
+    <!-- Via hole in pad -->
+    <circle cx="370" cy="210" r="8" fill="#0a150a" stroke="none"/>
+
+    <!-- Left vertical trace (full height of C) -->
+    <line x1="142" y1="136" x2="142" y2="376" stroke-width="22"/>
+
+    <!-- Bottom horizontal trace -->
+    <line x1="182" y1="376" x2="330" y2="376" stroke-width="22"/>
+
+    <!-- Bottom-left corner connection -->
+    <path d="M142,376 Q142,376 182,376" stroke-width="22" fill="none"/>
+
+    <!-- Top-left corner connection -->
+    <path d="M142,136 Q142,136 182,136" stroke-width="22" fill="none"/>
+
+    <!-- Bottom-right corner (rounded) -->
+    <path d="M330,376 Q370,376 370,336" stroke-width="22" fill="none"/>
+
+    <!-- Short right side going up from bottom corner -->
+    <line x1="370" y1="336" x2="370" y2="302" stroke-width="22"/>
+
+    <!-- Bottom-right arm terminates with a pad -->
+    <circle cx="370" cy="302" r="18" fill="#c8902a" stroke="none"/>
+    <!-- Via hole in pad -->
+    <circle cx="370" cy="302" r="8" fill="#0a150a" stroke="none"/>
+
+  </g>
+
+  <!-- Solder pads along the C traces -->
+  <g filter="url(#subtleGlow)">
+    <!-- Top trace pads -->
+    <circle cx="182" cy="136" r="14" fill="#d4a030" stroke="#0a150a" stroke-width="3"/>
+    <circle cx="256" cy="136" r="14" fill="#d4a030" stroke="#0a150a" stroke-width="3"/>
+    <circle cx="330" cy="136" r="14" fill="#d4a030" stroke="#0a150a" stroke-width="3"/>
+
+    <!-- Left trace pads -->
+    <circle cx="142" cy="196" r="14" fill="#d4a030" stroke="#0a150a" stroke-width="3"/>
+    <circle cx="142" cy="256" r="14" fill="#d4a030" stroke="#0a150a" stroke-width="3"/>
+    <circle cx="142" cy="316" r="14" fill="#d4a030" stroke="#0a150a" stroke-width="3"/>
+
+    <!-- Bottom trace pads -->
+    <circle cx="182" cy="376" r="14" fill="#d4a030" stroke="#0a150a" stroke-width="3"/>
+    <circle cx="256" cy="376" r="14" fill="#d4a030" stroke="#0a150a" stroke-width="3"/>
+    <circle cx="330" cy="376" r="14" fill="#d4a030" stroke="#0a150a" stroke-width="3"/>
+  </g>
+
+  <!-- Glow overlay on main traces for depth -->
+  <g filter="url(#glow)" opacity="0.4" fill="none" stroke="#ffcc55" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="182" y1="136" x2="330" y2="136" stroke-width="8"/>
+    <path d="M330,136 Q370,136 370,176" stroke-width="8" fill="none"/>
+    <line x1="370" y1="176" x2="370" y2="210" stroke-width="8"/>
+    <line x1="142" y1="136" x2="142" y2="376" stroke-width="8"/>
+    <line x1="182" y1="376" x2="330" y2="376" stroke-width="8"/>
+    <path d="M330,376 Q370,376 370,336" stroke-width="8" fill="none"/>
+    <line x1="370" y1="336" x2="370" y2="302" stroke-width="8"/>
+  </g>
+
+</svg>
