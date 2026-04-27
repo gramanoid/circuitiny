@@ -6,6 +6,8 @@
   "author": "Marco Franzon",
   "private": true,
   "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/mfranzon/circuitiny.git" },
+  "homepage": "https://github.com/mfranzon/circuitiny",
   "type": "module",
   "main": "out/main/main.js",
   "scripts": {

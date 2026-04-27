@@ -71,7 +71,7 @@ Add to your shell profile to make it permanent. If IDF is not installed, all des
 ## Installation
 
 ```bash
-git clone https://github.com/you/circuitiny
+git clone https://github.com/mfranzon/circuitiny
 cd circuitiny
 pnpm install
 pnpm dev          # opens the Electron app in dev mode with hot reload
