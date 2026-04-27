@@ -1,6 +1,6 @@
 # Circuitiny
 
-A local-first, AI-assisted circuit design tool for ESP32 boards. Wire components in a 3D view, describe what you want to build, and the AI agent writes the firmware and simulates it , all before you touch a physical chip.
+A local-first, AI-assisted circuit design tool for your projects. Wire components in a 3D view, describe what you want to build, and the AI agent writes the firmware and simulates it , all before you touch a physical chip.
 
 ![Circuitiny screenshot](docs/screenshot.png)
 
