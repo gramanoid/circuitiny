@@ -1,6 +1,6 @@
 # Circuitiny
 
-A local-first, AI-assisted circuit design tool for ESP32 boards. Wire components in a 3D view, describe what you want to build, and the AI agent writes the firmware and simulates it — all before you touch a physical chip.
+A local-first, AI-assisted circuit design tool for ESP32 boards. Wire components in a 3D view, describe what you want to build, and the AI agent writes the firmware and simulates it , all before you touch a physical chip.
 
 ![Circuitiny screenshot](docs/screenshot.png)
 
@@ -13,7 +13,7 @@ A local-first, AI-assisted circuit design tool for ESP32 boards. Wire components
 3. [Installation](#installation)
 4. [UI overview](#ui-overview)
 5. [Creating a project](#creating-a-project)
-6. [Extending the palette — adding components](#extending-the-palette--adding-components)
+6. [Extending the palette , adding components](#extending-the-palette--adding-components)
    - [component.json reference](#componentjson-reference)
    - [Pin definitions](#pin-definitions)
    - [Sim metadata](#sim-metadata)
@@ -37,13 +37,13 @@ A local-first, AI-assisted circuit design tool for ESP32 boards. Wire components
 
 ## Features
 
-- **3D circuit view** — drag components onto the board, click pins to wire them, inspect nets in real time
-- **AI agent** — describe a circuit in plain English; the agent adds components, wires them, runs DRC, and writes firmware
-- **Firmware simulation** — behaviors defined by the agent run in the browser; GPIO outputs animate instantly with no hardware required
-- **Code generation** — a complete ESP-IDF 5 C project (app_main.c, CMakeLists.txt, sdkconfig.defaults) is generated live from the project state
-- **Build and flash** — one-click `idf.py build`, `idf.py flash`, and serial monitor, all streamed inside the app
-- **Extensible catalog** — drop a `component.json` + `.glb` folder into `~/.circuitiny/catalog/` to add any component to the palette
-- **Multi-board** — ESP32-DevKitC v4, ESP32-S3-DevKitC-1, ESP32-C3-DevKitM-1, ESP32-C6-DevKitC-1, XIAO ESP32-S3
+- **3D circuit view** , drag components onto the board, click pins to wire them, inspect nets in real time
+- **AI agent** , describe a circuit in plain English; the agent adds components, wires them, runs DRC, and writes firmware
+- **Firmware simulation** , behaviors defined by the agent run in the browser; GPIO outputs animate instantly with no hardware required
+- **Code generation** , a complete ESP-IDF 5 C project (app_main.c, CMakeLists.txt, sdkconfig.defaults) is generated live from the project state
+- **Build and flash** , one-click `idf.py build`, `idf.py flash`, and serial monitor, all streamed inside the app
+- **Extensible catalog** , drop a `component.json` + `.glb` folder into `~/.circuitiny/catalog/` to add any component to the palette
+- **Multi-board** , ESP32-DevKitC v4, ESP32-S3-DevKitC-1, ESP32-C3-DevKitM-1, ESP32-C6-DevKitC-1, XIAO ESP32-S3
 
 ---
 
@@ -64,7 +64,7 @@ Install via the [official guide](https://docs.espressif.com/projects/esp-idf/en/
 export CIRCUITINY_IDF_PATH=/path/to/esp-idf   # default: /Users/$USER/esp/esp-idf
 ```
 
-Add to your shell profile to make it permanent. If IDF is not installed, all design, simulation, and code generation features still work — only Build and Flash are disabled.
+Add to your shell profile to make it permanent. If IDF is not installed, all design, simulation, and code generation features still work , only Build and Flash are disabled.
 
 ---
 
@@ -126,7 +126,7 @@ To reopen a project: click **Open** and select the `.circuitiny.json` file.
 
 ---
 
-## Extending the palette — adding components
+## Extending the palette , adding components
 
 The component catalog lives at `~/.circuitiny/catalog/`. Each component is a folder containing:
 
@@ -175,9 +175,9 @@ Each entry in the `pins` array describes one physical pin:
 
 ```jsonc
 {
-  "id": "data",          // internal id — used in net references like "sensor1.data"
+  "id": "data",          // internal id , used in net references like "sensor1.data"
   "label": "DATA",       // label shown in the 3D view and schematic
-  "type": "digital_io",  // electrical type — see table below
+  "type": "digital_io",  // electrical type , see table below
   "position": [0.0, -0.009, 0.0],  // XYZ position in meters, in the model's local frame
   "normal":   [0.0, -1.0,  0.0],   // wire exit direction (unit vector)
 
@@ -212,9 +212,9 @@ Each entry in the `pins` array describes one physical pin:
 Pin positions must match the GLB model's local coordinate space. Use the built-in **Catalog Editor** (`Catalog Editor` tab in the nav bar):
 
 1. Click **Load GLB** and pick your model file
-2. Click on the model surface at each pin location — the app records the 3D position and normal
+2. Click on the model surface at each pin location , the app records the 3D position and normal
 3. Name each pin and set its type
-4. Click **Save to catalog** — writes `component.json` + copies the GLB to `~/.circuitiny/catalog/<id>/`
+4. Click **Save to catalog** , writes `component.json` + copies the GLB to `~/.circuitiny/catalog/<id>/`
 
 ### Sim metadata
 
@@ -232,21 +232,21 @@ The `sim` field tells the simulator how to animate this component during firmwar
 
 | Role | `outputPin` effect | `inputPin` effect |
 |---|---|---|
-| `led` | glows red when GPIO is HIGH | — |
-| `buzzer` | glows when GPIO is HIGH | — |
-| `generic_output` | glows when GPIO is HIGH (relay, motor driver, etc.) | — |
-| `servo` | glows when PWM signal GPIO is HIGH | — |
-| `display` | glows when output GPIO is HIGH | — |
-| `button` | — | click in 3D view fires a rising edge (press) and falling edge (release) |
-| `generic_input` | — | click fires rising edge (PIR, potentiometer, DHT22, etc.) |
+| `led` | glows red when GPIO is HIGH | , |
+| `buzzer` | glows when GPIO is HIGH | , |
+| `generic_output` | glows when GPIO is HIGH (relay, motor driver, etc.) | , |
+| `servo` | glows when PWM signal GPIO is HIGH | , |
+| `display` | glows when output GPIO is HIGH | , |
+| `button` | , | click in 3D view fires a rising edge (press) and falling edge (release) |
+| `generic_input` | , | click fires rising edge (PIR, potentiometer, DHT22, etc.) |
 
-You can combine both fields — e.g. a component that both outputs and accepts clicks.
+You can combine both fields , e.g. a component that both outputs and accepts clicks.
 
 ### 3D model (.glb)
 
 - Format: binary glTF (`.glb`)
 - Coordinate system: Y-up, units in **meters**
-- Recommended: keep models small — typical components are 3–30 mm = 0.003–0.03 in model units
+- Recommended: keep models small , typical components are 3–30 mm = 0.003–0.03 in model units
 - Materials: standard PBR (`MeshStandardMaterial`). Emissive properties are overridden by the sim.
 - If no GLB is provided, the app renders a colored box placeholder
 
@@ -282,7 +282,7 @@ const myBoard: BoardDef = {
 
   features: ['Wi-Fi 6', 'BLE 5.0', 'USB CDC'],  // shown in board picker
 
-  // Restricted pins — DRC checks these
+  // Restricted pins , DRC checks these
   inputOnlyPins:  ['GPIO34', 'GPIO35'],
   strappingPins:  ['GPIO0', 'GPIO3', 'GPIO45', 'GPIO46'],
   flashPins:      ['GPIO27', 'GPIO28', 'GPIO29', 'GPIO30', 'GPIO31', 'GPIO32'],
@@ -317,13 +317,13 @@ const boards: Record<string, BoardDef> = {
 }
 ```
 
-3. **Pin positions** — the `headerPins(side, halfX, halfZ, labels)` helper places pins evenly along a header row. Parameters:
+3. **Pin positions** , the `headerPins(side, halfX, halfZ, labels)` helper places pins evenly along a header row. Parameters:
    - `side`: `'left'` (−Z edge) or `'right'` (+Z edge)
    - `halfX`: half the board length in meters (e.g. `0.022` for a 44mm board)
    - `halfZ`: half the board width in meters (e.g. `0.0145` for a 29mm board)
    - `labels`: array of `{ id, label, type }` from the pin closest to the USB end to the far end
 
-4. **GLB model** — place the `.glb` file in `resources/` (Electron assets). Pin coordinates in the board definition must match the model's local coordinate space. The board mesh is centered at the origin in the 3D view.
+4. **GLB model** , place the `.glb` file in `resources/` (Electron assets). Pin coordinates in the board definition must match the model's local coordinate space. The board mesh is centered at the origin in the 3D view.
 
 > **Tip:** If you don't have a GLB yet, omit the `model` field (or point it at a non-existent file). The app renders a parametric green PCB placeholder automatically based on the pin bounding box.
 
@@ -358,7 +358,7 @@ The agent has access to the following tools. You can reference these in prompts 
 | `write_firmware` | Writes raw C code into `main/app_main.c` (bypasses behavior DSL) |
 | `read_firmware` | Reads back a previously written firmware file |
 | `save_project` | Saves the project to disk (overwrites if previously saved, else opens dialog) |
-| `think` | Private reasoning step — no side effects |
+| `think` | Private reasoning step , no side effects |
 | `fetch_url` | Fetches a URL and returns readable text (for datasheets, docs) |
 | `list_glb_models` | Lists all registered GLB models |
 
@@ -379,7 +379,7 @@ The agent has access to the following tools. You can reference these in prompts 
 > "The LED should also blink at 2Hz when not pressed."
 > "Replace the button with a PIR sensor."
 
-**The agent knows ESP32 constraints** — it will avoid strapping pins, check current limits, add pull-up resistors for I2C, and suggest safe GPIO numbers.
+**The agent knows ESP32 constraints** , it will avoid strapping pins, check current limits, add pull-up resistors for I2C, and suggest safe GPIO numbers.
 
 ---
 
@@ -405,10 +405,10 @@ Edit behaviors manually in the **Behaviors** tab, or let the agent write them wi
 
 | Type | Required fields | When it fires |
 |---|---|---|
-| `boot` | — | Once at startup |
+| `boot` | , | Once at startup |
 | `timer` | `period_ms` | Every N milliseconds |
 | `gpio_edge` | `source`, `edge` | When a pin changes (`rising` / `falling` / `both`) |
-| `wifi_connected` | — | When the device connects to Wi-Fi |
+| `wifi_connected` | , | When the device connects to Wi-Fi |
 
 `source` for `gpio_edge` is a **pin ref**: `"instance.pinId"` (e.g. `"btn1.a"`) or `"board.pinId"` (e.g. `"board.gpio4"`).
 
@@ -424,7 +424,7 @@ Edit behaviors manually in the **Behaviors** tab, or let the agent write them wi
 
 `target` is a pin ref pointing at the component pin or board pin to drive.
 
-**Pin refs** always follow the format `"instance.pinId"` — not raw GPIO numbers. The sim and codegen resolve the actual GPIO number from the net connections.
+**Pin refs** always follow the format `"instance.pinId"` , not raw GPIO numbers. The sim and codegen resolve the actual GPIO number from the net connections.
 
 ---
 
@@ -436,7 +436,7 @@ The simulator evaluates your behaviors in JavaScript at up to 10× speed:
 
 - **Timer triggers** fire when the simulated clock crosses a period boundary
 - **gpio_edge triggers** fire when a button or input component is clicked in the 3D view
-- **GPIO outputs** animate immediately — LEDs glow, relays activate, WS2812B strips light up
+- **GPIO outputs** animate immediately , LEDs glow, relays activate, WS2812B strips light up
 - **Log actions** print to the Sim console
 
 **Interacting during simulation:**
@@ -446,7 +446,7 @@ The simulator evaluates your behaviors in JavaScript at up to 10× speed:
 - Release → `falling` edge fires → LED turns off
 - Rapid clicks each fire their own edge (no debounce in sim v0)
 
-**Speed control:** 1×, 2×, 5×, 10× — adjusts how fast simulated time advances relative to wall time.
+**Speed control:** 1×, 2×, 5×, 10× , adjusts how fast simulated time advances relative to wall time.
 
 The sim stops automatically if DRC errors appear while it's running.
 
@@ -477,16 +477,16 @@ If the agent writes raw firmware via `write_firmware`, those files appear as add
 
 Open the **Build / Flash** tab.
 
-1. **Select a serial port** — click ↻ to rescan, then pick your device (e.g. `/dev/cu.usbserial-0001`)
-2. **▶ Build** — writes the generated C project to `~/circuitiny/projects/<name>/` and runs `idf.py build`
-3. **⚡ Flash** — runs `idf.py flash` to the selected port
-4. **📟 Monitor** — opens `idf.py monitor` to stream serial output from the device
-5. **■ Stop** — kills the current operation (SIGINT → SIGKILL after 1.5s)
-6. **Clean** — runs `idf.py fullclean`
+1. **Select a serial port** , click ↻ to rescan, then pick your device (e.g. `/dev/cu.usbserial-0001`)
+2. **▶ Build** , writes the generated C project to `~/circuitiny/projects/<name>/` and runs `idf.py build`
+3. **⚡ Flash** , runs `idf.py flash` to the selected port
+4. **📟 Monitor** , opens `idf.py monitor` to stream serial output from the device
+5. **■ Stop** , kills the current operation (SIGINT → SIGKILL after 1.5s)
+6. **Clean** , runs `idf.py fullclean`
 
 Build output streams in real time. Errors appear in red, metadata in green.
 
-> **First build is slow** — `idf.py set-target` runs only once per project, configuring the toolchain for the selected chip. Subsequent builds are incremental.
+> **First build is slow** , `idf.py set-target` runs only once per project, configuring the toolchain for the selected chip. Subsequent builds are incremental.
 
 ---
 
