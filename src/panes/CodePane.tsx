@@ -5,15 +5,28 @@ import { generate } from '../codegen/generate'
 type FileKey = keyof ReturnType<typeof generate>['files']
 
 const FILES: FileKey[] = ['main/app_main.c', 'main/CMakeLists.txt', 'sdkconfig.defaults']
+const EDITABLE: FileKey[] = ['main/app_main.c']
 
 export default function CodePane() {
   const project = useStore((s) => s.project)
+  const setCustomCode = useStore((s) => s.setCustomCode)
   const [active, setActive] = useState<FileKey>('main/app_main.c')
   const { files, ir } = useMemo(() => generate(project), [project])
 
   const customCode = project.customCode ?? {}
-  const activeContent = active in customCode ? customCode[active as string] : files[active]
   const isCustom = active in customCode
+  const activeContent = isCustom ? customCode[active as string] : files[active]
+  const isEditable = EDITABLE.includes(active)
+
+  function handleEdit(value: string) {
+    setCustomCode(active, value)
+  }
+
+  function handleReset() {
+    const next = { ...customCode }
+    delete next[active as string]
+    useStore.setState((s) => ({ project: { ...s.project, customCode: next } }))
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -25,25 +38,45 @@ export default function CodePane() {
             {f in customCode && (
               <span style={{ marginLeft: 4, fontSize: 8, color: '#7fc97a',
                              background: '#0d2a0d', borderRadius: 3, padding: '0 3px' }}>
-                agent
+                edited
               </span>
             )}
           </button>
         ))}
-        <div style={{ marginLeft: 'auto', fontSize: 10, color: '#888' }}>
-          {isCustom
-            ? <span style={{ color: '#7fc97a' }}>agent firmware</span>
-            : <>{ir.components.length} comps · {ir.buses.length} buses
-                {ir.issues.length > 0 && <span style={{ color: '#ffcc00' }}> · {ir.issues.length} unwired</span>}
-              </>
-          }
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {isCustom && isEditable && (
+            <button onClick={handleReset} style={resetStyle} title="Discard edits and restore generated code">
+              reset
+            </button>
+          )}
+          <span style={{ fontSize: 10, color: '#888' }}>
+            {isCustom
+              ? <span style={{ color: '#7fc97a' }}>edited</span>
+              : <>{ir.components.length} comps · {ir.buses.length} buses
+                  {ir.issues.length > 0 && <span style={{ color: '#ffcc00' }}> · {ir.issues.length} unwired</span>}
+                </>
+            }
+          </span>
         </div>
       </div>
-      <pre style={{
-        flex: 1, margin: 0, overflow: 'auto', padding: 10,
-        fontFamily: "'SF Mono', Menlo, monospace", fontSize: 11, lineHeight: 1.45,
-        color: '#ddd', background: '#0f0f0f', whiteSpace: 'pre'
-      }}>{activeContent}</pre>
+      {isEditable
+        ? <textarea
+            value={activeContent}
+            onChange={(e) => handleEdit(e.target.value)}
+            spellCheck={false}
+            style={{
+              flex: 1, margin: 0, padding: 10, border: 'none', outline: 'none', resize: 'none',
+              fontFamily: "'SF Mono', Menlo, monospace", fontSize: 11, lineHeight: 1.45,
+              color: '#ddd', background: '#0f0f0f', whiteSpace: 'pre', overflowWrap: 'normal',
+              overflowX: 'auto',
+            }}
+          />
+        : <pre style={{
+            flex: 1, margin: 0, overflow: 'auto', padding: 10,
+            fontFamily: "'SF Mono', Menlo, monospace", fontSize: 11, lineHeight: 1.45,
+            color: '#ddd', background: '#0f0f0f', whiteSpace: 'pre'
+          }}>{activeContent}</pre>
+      }
     </div>
   )
 }
@@ -55,3 +88,8 @@ const tabStyle = (active: boolean): React.CSSProperties => ({
   borderRadius: 3, padding: '2px 8px', fontSize: 10, cursor: 'pointer',
   fontFamily: "'SF Mono', Menlo, monospace"
 })
+
+const resetStyle: React.CSSProperties = {
+  background: 'transparent', color: '#888', border: '1px solid #333',
+  borderRadius: 3, padding: '1px 6px', fontSize: 10, cursor: 'pointer'
+}

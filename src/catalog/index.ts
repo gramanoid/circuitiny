@@ -17,7 +17,7 @@ const ledRed: ComponentDef = {
       position: [ 0.0012, -0.005, 0], normal: [0, -1, 0] }
   ],
   power: { current_ma: 10, rail: '3v3' },
-  driver: { language: 'c', defaultPinAssignments: { anode: 'GPIO2' }, includes: ['driver/gpio.h'] },
+  driver: { language: 'c', defaultPinAssignments: { anode: 'GPIO4' }, includes: ['driver/gpio.h'] },
   schematic: { symbol: 'led' },
   sim: { role: 'led', outputPin: 'anode' }
 }
@@ -330,17 +330,86 @@ const button6mm: ComponentDef = {
   sim: { role: 'button', inputPin: 'a' }
 }
 
+// Shorthand for Freenove ESP32-WROVER-DEV (58×28 mm, 19 pins/side).
+const hpWR = (side: 'left' | 'right', labels: { id: string; label: string; type: PinType }[]) =>
+  headerPins(side, 0.029, 0.014, labels)
+
+// Freenove ESP32-WROVER-DEV — 38-pin board with ESP32-WROVER-E module.
+// GPIO16/17 reserved for PSRAM; GPIO6-11 tied to internal flash.
+const freenoveWrover: BoardDef = {
+  id: 'freenove-esp32-wrover-dev',
+  name: 'Freenove ESP32-WROVER-DEV',
+  version: '0.1.0',
+  boardVersion: '1.0',
+  category: 'misc',
+  model: 'esp32-devkitc.glb',
+  target: 'esp32',
+  features: ['Wi-Fi', 'BLE 4.2', 'Bluetooth Classic', '4 MB PSRAM', 'Camera connector'],
+  inputOnlyPins: ['GPIO34', 'GPIO35', 'GPIO36', 'GPIO39'],
+  strappingPins: ['GPIO0', 'GPIO2', 'GPIO5', 'GPIO12', 'GPIO15'],
+  flashPins: ['GPIO6', 'GPIO7', 'GPIO8', 'GPIO9', 'GPIO10', 'GPIO11'],
+  usbPins: [],
+  adc1Pins: ['GPIO32', 'GPIO33', 'GPIO34', 'GPIO35', 'GPIO36', 'GPIO39'],
+  adc2Pins: ['GPIO0', 'GPIO2', 'GPIO4', 'GPIO12', 'GPIO13', 'GPIO14', 'GPIO15', 'GPIO25', 'GPIO26', 'GPIO27'],
+  railBudgetMa: { '3v3': 500 },
+  pins: [
+    ...hpWR('left', [
+      { id: 'gnd_l0',  label: 'GND', type: 'ground'     },
+      { id: '3v3',     label: '3V3', type: 'power_out'  },
+      { id: 'en',      label: 'EN',  type: 'nc'         },
+      { id: 'gpio36',  label: '36',  type: 'analog_in'  },  // VP, input-only
+      { id: 'gpio39',  label: '39',  type: 'analog_in'  },  // VN, input-only
+      { id: 'gpio34',  label: '34',  type: 'analog_in'  },  // input-only
+      { id: 'gpio35',  label: '35',  type: 'analog_in'  },  // input-only
+      { id: 'gpio32',  label: '32',  type: 'digital_io' },
+      { id: 'gpio33',  label: '33',  type: 'digital_io' },
+      { id: 'gpio25',  label: '25',  type: 'digital_io' },  // DAC1
+      { id: 'gpio26',  label: '26',  type: 'digital_io' },  // DAC2
+      { id: 'gpio27',  label: '27',  type: 'digital_io' },
+      { id: 'gpio14',  label: '14',  type: 'digital_io' },
+      { id: 'gpio12',  label: '12',  type: 'digital_io' },
+      { id: 'gpio13',  label: '13',  type: 'digital_io' },
+      { id: 'gpio15',  label: '15',  type: 'digital_io' },
+      { id: 'gpio2_l', label: '2',   type: 'digital_io' },
+      { id: 'gpio0_l', label: '0',   type: 'digital_io' },
+      { id: 'gpio4_l', label: '4',   type: 'digital_io' },
+    ]),
+    ...hpWR('right', [
+      { id: 'gnd_r0',  label: 'GND', type: 'ground'     },
+      { id: 'vin',     label: 'VIN', type: 'power_in'   },
+      { id: 'gpio23',  label: '23',  type: 'spi_mosi'   },
+      { id: 'gpio22',  label: '22',  type: 'i2c_scl'    },
+      { id: 'gpio1',   label: '1',   type: 'uart_tx'    },  // TX0
+      { id: 'gpio3',   label: '3',   type: 'uart_rx'    },  // RX0
+      { id: 'gpio21',  label: '21',  type: 'i2c_sda'    },
+      { id: 'gnd_r1',  label: 'GND', type: 'ground'     },
+      { id: 'gpio19',  label: '19',  type: 'spi_miso'   },
+      { id: 'gpio18',  label: '18',  type: 'spi_sck'    },
+      { id: 'gpio5',   label: '5',   type: 'spi_cs'     },
+      { id: 'gpio17',  label: '17',  type: 'nc'         },  // PSRAM-reserved
+      { id: 'gpio16',  label: '16',  type: 'nc'         },  // PSRAM-reserved
+      { id: 'gpio4_r', label: '4',   type: 'digital_io' },
+      { id: 'gpio0_r', label: '0',   type: 'digital_io' },
+      { id: 'gpio2_r', label: '2',   type: 'digital_io' },
+      { id: 'gpio15_r',label: '15',  type: 'digital_io' },
+      { id: 'gpio13_r',label: '13',  type: 'digital_io' },
+      { id: 'gpio12_r',label: '12',  type: 'digital_io' },
+    ]),
+  ]
+}
+
 const components: Record<string, ComponentDef> = {
   [ledRed.id]:     ledRed,
   [resistor220.id]: resistor220,
   [button6mm.id]:  button6mm,
 }
 const boards: Record<string, BoardDef> = {
-  [devkitc.id]:  devkitc,
-  [s3devkitc.id]: s3devkitc,
-  [c3devkitm.id]: c3devkitm,
-  [c6devkitc.id]: c6devkitc,
-  [xiaoS3.id]:    xiaoS3,
+  [devkitc.id]:         devkitc,
+  [s3devkitc.id]:       s3devkitc,
+  [c3devkitm.id]:       c3devkitm,
+  [c6devkitc.id]:       c6devkitc,
+  [xiaoS3.id]:          xiaoS3,
+  [freenoveWrover.id]:  freenoveWrover,
 }
 const glbBlobs: Record<string, string> = {}   // componentId -> blob URL
 

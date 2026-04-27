@@ -335,7 +335,7 @@ function Nets({ violations }: { violations: Violation[] }) {
             <CubicBezierLine key={`${net.id}-${i}`}
               start={a.position} midA={ca} midB={cb} end={b.position}
               color={baseColor} lineWidth={isError ? 3 : 2}
-              onClick={() => { if (confirm(`Delete net ${net.id}?`)) removeNet(net.id) }} />
+              onContextMenu={(e: any) => { e.stopPropagation(); removeNet(net.id) }} />
           )
         }
         return segments

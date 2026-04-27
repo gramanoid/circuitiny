@@ -126,6 +126,30 @@ To reopen a project: click **Open** and select the `.circuitiny.json` file.
 
 ---
 
+## Creating 3D models with Claude Code
+
+If you use [Claude Code](https://claude.ai/code), you can generate custom 3D component models with the [/render skill](https://github.com/mfranzon/render) and import them directly into Circuitiny without leaving the terminal.
+
+**Step 1 — Generate a 3D model**
+
+```
+/render a 10kΩ potentiometer with 3 pins
+```
+
+The `/render` skill generates a `.glb` model from a text description using build123d and opens it in a browser viewer. You can iterate on the shape until it looks right.
+
+**Step 2 — Import into Circuitiny**
+
+```
+/esp-ai-import
+```
+
+The `/esp-ai-import` skill picks up the most recently rendered `.glb`, asks you for the component name, category, and pin layout, then installs it into `~/.circuitiny/catalog/`. Restart Circuitiny and the component appears in the palette.
+
+You can also fine-tune pin positions after import using the built-in **Catalog Editor** tab.
+
+---
+
 ## Extending the palette , adding components
 
 The component catalog lives at `~/.circuitiny/catalog/`. Each component is a folder containing:

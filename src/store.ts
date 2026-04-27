@@ -210,12 +210,12 @@ export const useStore = create<State>((set) => ({
     pendingEdges: []
   })),
   pressButton: (label) => set((s) => ({
-    simGpios: { ...s.simGpios, [label]: true },
-    pendingEdges: [...s.pendingEdges, { label, type: 'rising' as const }]
-  })),
-  releaseButton: (label) => set((s) => ({
     simGpios: { ...s.simGpios, [label]: false },
     pendingEdges: [...s.pendingEdges, { label, type: 'falling' as const }]
+  })),
+  releaseButton: (label) => set((s) => ({
+    simGpios: { ...s.simGpios, [label]: true },
+    pendingEdges: [...s.pendingEdges, { label, type: 'rising' as const }]
   })),
   setSimSpeed: (simSpeed) => set({ simSpeed }),
 
@@ -287,7 +287,7 @@ export const useStore = create<State>((set) => ({
 }))
 
 function seed(): Project {
-  const p = emptyProject('blink-button', 'esp32-devkitc-v4')
+  const p = emptyProject('blink-button', 'freenove-esp32-wrover-dev')
 
   p.components.push(
     { instance: 'r1',   componentId: 'resistor-220r', position: [0.033, 0.005,  0.015], pinAssignments: {} },
@@ -296,11 +296,11 @@ function seed(): Project {
   )
 
   p.nets.push(
-    { id: 'net1', endpoints: ['board.gpio16', 'r1.in']        },  // GPIO16 → resistor in
-    { id: 'net2', endpoints: ['r1.out',       'led1.anode']   },  // resistor out → LED anode
-    { id: 'net3', endpoints: ['led1.cathode', 'board.gnd_l']  },  // LED cathode → GND
-    { id: 'net4', endpoints: ['board.gpio4',  'btn1.a']       },  // GPIO4 → button A
-    { id: 'net5', endpoints: ['btn1.b',       'board.gnd_r']  }   // button B → GND
+    { id: 'net1', endpoints: ['board.gpio4_l',  'r1.in']       },  // GPIO4 → resistor in
+    { id: 'net2', endpoints: ['r1.out',         'led1.anode']  },  // resistor out → LED anode
+    { id: 'net3', endpoints: ['led1.cathode',   'board.gnd_l0'] }, // LED cathode → GND
+    { id: 'net4', endpoints: ['board.gpio13',   'btn1.a']      },  // GPIO13 → button A
+    { id: 'net5', endpoints: ['btn1.b',         'board.gnd_r0'] }  // button B → GND
   )
 
   p.behaviors.push(
@@ -311,7 +311,7 @@ function seed(): Project {
     },
     {
       id: 'on_press',
-      trigger: { type: 'gpio_edge', source: 'btn1.a', edge: 'rising' },
+      trigger: { type: 'gpio_edge', source: 'btn1.a', edge: 'falling' },
       actions: [
         { type: 'set_output', target: 'led1.anode', value: 'on' },
         { type: 'log', level: 'info', message: 'button pressed — LED on' }
@@ -319,7 +319,7 @@ function seed(): Project {
     },
     {
       id: 'on_release',
-      trigger: { type: 'gpio_edge', source: 'btn1.a', edge: 'falling' },
+      trigger: { type: 'gpio_edge', source: 'btn1.a', edge: 'rising' },
       actions: [
         { type: 'set_output', target: 'led1.anode', value: 'off' },
         { type: 'log', level: 'info', message: 'button released — LED off' }

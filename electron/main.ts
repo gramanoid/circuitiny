@@ -6,6 +6,7 @@ import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { randomUUID } from 'crypto'
+import * as pty from 'node-pty'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const ICON_PATH = join(__dirname, '../../resources/icon.png')
@@ -16,7 +17,8 @@ const IDF_PATH = process.env.CIRCUITINY_IDF_PATH ?? process.env.IDF_PATH ?? join
 
 app.setName('Circuitiny')
 
-const runs = new Map<string, ChildProcessWithoutNullStreams>()
+type RunHandle = ChildProcessWithoutNullStreams | pty.IPty
+const runs = new Map<string, RunHandle>()
 
 let mainWindow: BrowserWindow | null = null
 
@@ -184,30 +186,40 @@ ipcMain.handle('idfStart', async (_e, opts: {
   }
 
   const runId = randomUUID()
-  const shell = `source ${JSON.stringify(join(IDF_PATH, 'export.sh'))} 1>/dev/null && cd ${JSON.stringify(dir)} && ${cmd}`
-  // GUI apps on macOS don't inherit the terminal PATH, so Homebrew's python3 is
-  // not visible to bash -l. Prepend the common Homebrew prefixes explicitly so
-  // export.sh can activate the venv and put idf.py on PATH.
   const extraPaths = ['/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', '/usr/local/sbin']
   const PATH = [...extraPaths, process.env.PATH ?? ''].join(':')
-  const child = spawn('bash', ['-c', shell], {
-    env: { ...process.env, PATH, IDF_PATH, PYTHONUNBUFFERED: '1' }
-  }) as ChildProcessWithoutNullStreams
-  runs.set(runId, child)
+  const shell = `source ${JSON.stringify(join(IDF_PATH, 'export.sh'))} 1>/dev/null && cd ${JSON.stringify(dir)} && ${cmd}`
+  const env = { ...process.env, PATH, IDF_PATH, PYTHONUNBUFFERED: '1' }
 
-  const emit = (stream: 'stdout' | 'stderr', data: Buffer) => {
-    const text = data.toString('utf8')
-    mainWindow?.webContents.send('idf:log', { runId, stream, text })
+  if (opts.op === 'monitor') {
+    // idf.py monitor requires a TTY — use node-pty to provide one.
+    const ptyProcess = pty.spawn('bash', ['-c', shell], {
+      name: 'xterm-color', cols: 220, rows: 50, cwd: dir, env
+    })
+    runs.set(runId, ptyProcess)
+    ptyProcess.onData((text) => {
+      mainWindow?.webContents.send('idf:log', { runId, stream: 'stdout', text })
+    })
+    ptyProcess.onExit(({ exitCode }) => {
+      runs.delete(runId)
+      mainWindow?.webContents.send('idf:exit', { runId, code: exitCode, signal: null })
+    })
+  } else {
+    const child = spawn('bash', ['-c', shell], { env }) as ChildProcessWithoutNullStreams
+    runs.set(runId, child)
+    const emit = (stream: 'stdout' | 'stderr', data: Buffer) => {
+      mainWindow?.webContents.send('idf:log', { runId, stream, text: data.toString('utf8') })
+    }
+    child.stdout.on('data', (d) => emit('stdout', d))
+    child.stderr.on('data', (d) => emit('stderr', d))
+    child.on('exit', (code, signal) => {
+      runs.delete(runId)
+      mainWindow?.webContents.send('idf:exit', { runId, code, signal })
+    })
+    child.on('error', (err) => {
+      mainWindow?.webContents.send('idf:log', { runId, stream: 'stderr', text: `spawn error: ${err.message}\n` })
+    })
   }
-  child.stdout.on('data', (d) => emit('stdout', d))
-  child.stderr.on('data', (d) => emit('stderr', d))
-  child.on('exit', (code, signal) => {
-    runs.delete(runId)
-    mainWindow?.webContents.send('idf:exit', { runId, code, signal })
-  })
-  child.on('error', (err) => {
-    mainWindow?.webContents.send('idf:log', { runId, stream: 'stderr', text: `spawn error: ${err.message}\n` })
-  })
   return { runId, cwd: dir, cmd }
 })
 
@@ -243,17 +255,25 @@ ipcMain.handle('openProject', async () => {
   return { project: parsed, path: r.filePaths[0] }
 })
 
+function killRun(handle: RunHandle, signal: 'SIGINT' | 'SIGKILL' = 'SIGKILL') {
+  if ('pid' in handle && typeof (handle as any).pid === 'number') {
+    // node-pty IPty — kill via pid
+    try { process.kill((handle as pty.IPty).pid, signal) } catch { /* already dead */ }
+  } else {
+    (handle as ChildProcessWithoutNullStreams).kill(signal)
+  }
+}
+
 ipcMain.handle('idfStop', async (_e, runId: string) => {
-  const child = runs.get(runId)
-  if (!child) return { ok: false, reason: 'not running' }
-  child.kill('SIGINT')
-  // fallback hard kill
-  setTimeout(() => { if (runs.has(runId)) child.kill('SIGKILL') }, 1500)
+  const handle = runs.get(runId)
+  if (!handle) return { ok: false, reason: 'not running' }
+  killRun(handle, 'SIGINT')
+  setTimeout(() => { if (runs.has(runId)) killRun(runs.get(runId)!, 'SIGKILL') }, 1500)
   return { ok: true }
 })
 
 app.on('before-quit', () => {
-  for (const child of runs.values()) child.kill('SIGKILL')
+  for (const handle of runs.values()) killRun(handle, 'SIGKILL')
 })
 
 app.whenReady().then(() => {
