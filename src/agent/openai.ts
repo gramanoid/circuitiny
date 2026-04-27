@@ -18,8 +18,8 @@ export async function chatOpenAI(
     'Authorization': `Bearer ${cfg.apiKey ?? ''}`,
   }
   if (cfg.provider === 'openrouter') {
-    headers['HTTP-Referer'] = 'https://esp-ai.app'
-    headers['X-Title'] = 'esp-ai'
+    headers['HTTP-Referer'] = 'https://circuitiny.app'
+    headers['X-Title'] = 'Circuitiny'
   }
 
   for (let loop = 0; loop < maxLoops; loop++) {

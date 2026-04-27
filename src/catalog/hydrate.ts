@@ -1,4 +1,4 @@
-// Loads user-added components from ~/.esp-ai/catalog/ into the in-memory catalog.
+// Loads user-added components from ~/.circuitiny/catalog/ into the in-memory catalog.
 
 import { catalog } from './index'
 import type { ComponentDef, SchematicSymbolSpec, SchematicSymbol, SimDef } from '../project/component'

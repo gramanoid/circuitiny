@@ -1,4 +1,4 @@
-// In-memory catalog for M2. Will be replaced by disk-backed loader (~/esp-ai/catalog/) in M9.
+// In-memory catalog for M2. Will be replaced by disk-backed loader (~/circuitiny/catalog/) in M9.
 
 import type { ComponentDef, BoardDef, PinDef } from '../project/component'
 import type { PinType } from '../project/schema'

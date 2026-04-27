@@ -107,7 +107,7 @@ export default function BuildPane() {
       }}>
         {log.length === 0 && (
           <div style={{ color: '#666', fontStyle: 'italic' }}>
-            Build writes the project to <code>~/esp-ai/projects/{project.name}/</code>, runs <code>idf.py set-target</code> on first build, then <code>idf.py build</code>. Flash needs a selected serial port.
+            Build writes the project to <code>~/circuitiny/projects/{project.name}/</code>, runs <code>idf.py set-target</code> on first build, then <code>idf.py build</code>. Flash needs a selected serial port.
           </div>
         )}
         {log.map((l, i) => (

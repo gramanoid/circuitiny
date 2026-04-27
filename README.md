@@ -1,8 +1,8 @@
-# esp-ai
+# Circuitiny
 
 A local-first, AI-assisted circuit design tool for ESP32 boards. Wire components in a 3D view, describe what you want to build, and the AI agent writes the firmware and simulates it — all before you touch a physical chip.
 
-![esp-ai screenshot](docs/screenshot.png)
+![Circuitiny screenshot](docs/screenshot.png)
 
 ---
 
@@ -42,7 +42,7 @@ A local-first, AI-assisted circuit design tool for ESP32 boards. Wire components
 - **Firmware simulation** — behaviors defined by the agent run in the browser; GPIO outputs animate instantly with no hardware required
 - **Code generation** — a complete ESP-IDF 5 C project (app_main.c, CMakeLists.txt, sdkconfig.defaults) is generated live from the project state
 - **Build and flash** — one-click `idf.py build`, `idf.py flash`, and serial monitor, all streamed inside the app
-- **Extensible catalog** — drop a `component.json` + `.glb` folder into `~/.esp-ai/catalog/` to add any component to the palette
+- **Extensible catalog** — drop a `component.json` + `.glb` folder into `~/.circuitiny/catalog/` to add any component to the palette
 - **Multi-board** — ESP32-DevKitC v4, ESP32-S3-DevKitC-1, ESP32-C3-DevKitM-1, ESP32-C6-DevKitC-1, XIAO ESP32-S3
 
 ---
@@ -61,7 +61,7 @@ A local-first, AI-assisted circuit design tool for ESP32 boards. Wire components
 Install via the [official guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/get-started/). After installation, set the path:
 
 ```bash
-export ESP_AI_IDF_PATH=/path/to/esp-idf   # default: /Users/$USER/esp/esp-idf
+export CIRCUITINY_IDF_PATH=/path/to/esp-idf   # default: /Users/$USER/esp/esp-idf
 ```
 
 Add to your shell profile to make it permanent. If IDF is not installed, all design, simulation, and code generation features still work — only Build and Flash are disabled.
@@ -71,8 +71,8 @@ Add to your shell profile to make it permanent. If IDF is not installed, all des
 ## Installation
 
 ```bash
-git clone https://github.com/you/esp-ai
-cd esp-ai
+git clone https://github.com/you/circuitiny
+cd circuitiny
 pnpm install
 pnpm dev          # opens the Electron app in dev mode with hot reload
 ```
@@ -89,7 +89,7 @@ pnpm build
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  esp-ai         [Project]  [Catalog Editor]              myproject ●  [Open] [Save]  [+ New] │
+│  Circuitiny     [Project]  [Catalog Editor]              myproject ●  [Open] [Save]  [+ New] │
 ├──────────┬──────────────────────────────────┬────────────────────┬──────────┤
 │          │                                  │                    │          │
 │ Palette  │         3D Viewer                │ Schematic /        │  Agent   │
@@ -120,18 +120,18 @@ pnpm build
 2. Choose a board from the picker
 3. Name your project and click Create
 
-Projects auto-save state in memory. Use **Save** (or `Cmd+S`) to persist to a `.espai.json` file. An amber `●` dot after the project name means there are unsaved changes.
+Projects auto-save state in memory. Use **Save** (or `Cmd+S`) to persist to a `.circuitiny.json` file. An amber `●` dot after the project name means there are unsaved changes.
 
-To reopen a project: click **Open** and select the `.espai.json` file.
+To reopen a project: click **Open** and select the `.circuitiny.json` file.
 
 ---
 
 ## Extending the palette — adding components
 
-The component catalog lives at `~/.esp-ai/catalog/`. Each component is a folder containing:
+The component catalog lives at `~/.circuitiny/catalog/`. Each component is a folder containing:
 
 ```
-~/.esp-ai/catalog/
+~/.circuitiny/catalog/
 └── my-component/
     ├── component.json    ← required
     └── model.glb         ← optional but recommended
@@ -214,7 +214,7 @@ Pin positions must match the GLB model's local coordinate space. Use the built-i
 1. Click **Load GLB** and pick your model file
 2. Click on the model surface at each pin location — the app records the 3D position and normal
 3. Name each pin and set its type
-4. Click **Save to catalog** — writes `component.json` + copies the GLB to `~/.esp-ai/catalog/<id>/`
+4. Click **Save to catalog** — writes `component.json` + copies the GLB to `~/.circuitiny/catalog/<id>/`
 
 ### Sim metadata
 
@@ -478,7 +478,7 @@ If the agent writes raw firmware via `write_firmware`, those files appear as add
 Open the **Build / Flash** tab.
 
 1. **Select a serial port** — click ↻ to rescan, then pick your device (e.g. `/dev/cu.usbserial-0001`)
-2. **▶ Build** — writes the generated C project to `~/esp-ai/projects/<name>/` and runs `idf.py build`
+2. **▶ Build** — writes the generated C project to `~/circuitiny/projects/<name>/` and runs `idf.py build`
 3. **⚡ Flash** — runs `idf.py flash` to the selected port
 4. **📟 Monitor** — opens `idf.py monitor` to stream serial output from the device
 5. **■ Stop** — kills the current operation (SIGINT → SIGKILL after 1.5s)
@@ -492,7 +492,7 @@ Build output streams in real time. Errors appear in red, metadata in green.
 
 ## Project file format
 
-Projects are saved as `.espai.json`. The format is stable and human-readable:
+Projects are saved as `.circuitiny.json`. The format is stable and human-readable:
 
 ```jsonc
 {
@@ -553,7 +553,7 @@ src/
 │
 ├── catalog/
 │   ├── index.ts        # in-memory catalog: boards + inline components
-│   └── hydrate.ts      # loads ~/.esp-ai/catalog/ on startup
+│   └── hydrate.ts      # loads ~/.circuitiny/catalog/ on startup
 │
 ├── codegen/
 │   ├── ir.ts           # intermediate representation: resolves nets → GPIO numbers
@@ -583,7 +583,7 @@ src/
 
 electron/
 ├── main.ts     # IPC handlers: file dialogs, catalog IO, idf.py pipeline
-└── preload.ts  # contextBridge: exposes window.espAI to the renderer
+└── preload.ts  # contextBridge: exposes window.circuitiny to the renderer
 ```
 
 **Data flow:**

@@ -6,8 +6,8 @@ import { PROVIDER_DEFAULTS, type ProviderType } from '../agent/types'
 import { loadChatHistory, saveChatHistory, clearChatHistory } from '../agent/chatSession'
 import { useStore } from '../store'
 
-const LS_KEY     = 'esp-ai:provider-cfg'
-const LS_EXPERT  = 'esp-ai:expert-mode'
+const LS_KEY     = 'circuitiny:provider-cfg'
+const LS_EXPERT  = 'circuitiny:expert-mode'
 
 function loadCfg() {
   try { return JSON.parse(localStorage.getItem(LS_KEY) ?? '{}') } catch { return {} }

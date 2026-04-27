@@ -1,5 +1,5 @@
 // Per-project chat history persisted in localStorage.
-// Key: esp-ai:chat:<projectName>
+// Key: circuitiny:chat:<projectName>
 // Keeps the last MAX_MSGS messages; silently drops oldest on overflow.
 
 import type { Msg } from './types'
@@ -7,7 +7,7 @@ import type { Msg } from './types'
 const MAX_MSGS = 200
 
 function key(projectName: string) {
-  return `esp-ai:chat:${projectName}`
+  return `circuitiny:chat:${projectName}`
 }
 
 export function loadChatHistory(projectName: string): Msg[] {

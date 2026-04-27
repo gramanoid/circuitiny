@@ -6,3 +6,5 @@ out
 venv
 .esp-ai/
 secrets/
+.claude/
+PLAN_*.md

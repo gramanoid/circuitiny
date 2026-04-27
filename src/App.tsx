@@ -59,7 +59,7 @@ export default function App() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <nav style={{ display: 'flex', gap: 6, padding: '6px 10px', background: '#0a0a0a',
                     borderBottom: '1px solid #333', alignItems: 'center' }}>
-        <strong style={{ fontSize: 12, marginRight: 12 }}>esp-ai</strong>
+        <strong style={{ fontSize: 12, marginRight: 12 }}>Circuitiny</strong>
         <button onClick={() => setMode('project')} style={tabStyle(mode === 'project')}>Project</button>
         <button onClick={() => setMode('catalog-editor')} style={tabStyle(mode === 'catalog-editor')}>Catalog Editor</button>
         <div style={{ flex: 1 }} />
@@ -85,15 +85,15 @@ export default function App() {
 
 function ProjectMode() {
   return (
-    <PanelGroup direction="horizontal" autoSaveId="esp-ai:project">
+    <PanelGroup direction="horizontal" autoSaveId="circuitiny:project">
       <Panel defaultSize={15} minSize={10} maxSize={30}>
         <PaneFrame title="Palette"><Palette /></PaneFrame>
       </Panel>
       <ResizeH />
       <Panel defaultSize={60} minSize={20}>
-        <PanelGroup direction="vertical" autoSaveId="esp-ai:project:center">
+        <PanelGroup direction="vertical" autoSaveId="circuitiny:project:center">
           <Panel defaultSize={70} minSize={20}>
-            <PanelGroup direction="horizontal" autoSaveId="esp-ai:project:center:top">
+            <PanelGroup direction="horizontal" autoSaveId="circuitiny:project:center:top">
               <Panel defaultSize={60} minSize={20}>
                 <PaneFrame title="3D Viewer" noPad><Viewer3D /></PaneFrame>
               </Panel>
@@ -119,7 +119,7 @@ function ProjectMode() {
 
 function CatalogEditorMode() {
   return (
-    <PanelGroup direction="horizontal" autoSaveId="esp-ai:editor">
+    <PanelGroup direction="horizontal" autoSaveId="circuitiny:editor">
       <Panel defaultSize={70} minSize={30}>
         <PaneFrame title="Component Editor — click on the model to add a pin" noPad><CatalogEditor3D /></PaneFrame>
       </Panel>

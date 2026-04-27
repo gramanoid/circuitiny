@@ -307,7 +307,7 @@ function seed(): Project {
     {
       id: 'on_boot',
       trigger: { type: 'boot' },
-      actions: [{ type: 'log', level: 'info', message: 'esp-ai ready — hold button to light LED' }]
+      actions: [{ type: 'log', level: 'info', message: 'Circuitiny ready — hold button to light LED' }]
     },
     {
       id: 'on_press',
