@@ -28,7 +28,7 @@ function createWindow() {
     icon: ICON_PATH,
     webPreferences: {
       preload: join(__dirname, '../preload/preload.mjs'),
-      sandbox: false
+      sandbox: true
     }
   })
   mainWindow = win
