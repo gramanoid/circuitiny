@@ -2,6 +2,7 @@
   "name": "circuitiny",
   "version": "0.0.1",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "main": "out/main/main.js",
   "scripts": {
