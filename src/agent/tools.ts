@@ -67,6 +67,18 @@ export const tools: ToolDef[] = [
   {
     type: 'function',
     function: {
+      name: 'remove_net',
+      description: 'Remove a net (wire connection) by its id. Call get_project first to see current net ids.',
+      parameters: {
+        type: 'object',
+        properties: { id: { type: 'string', description: 'Net id, e.g. "net-3"' } },
+        required: ['id']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'connect',
       description: 'Wire two pins together. Pin refs look like "instance.pinId" or "board.pinId" (e.g. "led1.anode", "board.gpio4").',
       parameters: {
@@ -297,6 +309,17 @@ async function handleRemoveComponent(args: Record<string, any>): Promise<ToolRes
   return { ok: true, data: { removed: args.instance } }
 }
 
+async function handleRemoveNet(args: Record<string, any>): Promise<ToolResult> {
+  const { project, removeNet } = useStore.getState()
+  const net = project.nets.find(n => n.id === args.id)
+  if (!net) {
+    const ids = project.nets.map(n => n.id)
+    return { ok: false, error: `no such net "${args.id}". Current net ids: [${ids.join(', ') || '(none)'}].` }
+  }
+  removeNet(args.id)
+  return { ok: true, data: { removed: args.id, endpoints: net.endpoints } }
+}
+
 async function handleConnect(args: Record<string, any>): Promise<ToolResult> {
   const s = useStore.getState()
   const from = args.from as string, to = args.to as string
@@ -334,6 +357,7 @@ async function handleReadFirmware(args: Record<string, any>): Promise<ToolResult
 async function handleWriteFirmware(args: Record<string, any>): Promise<ToolResult> {
   const file = String(args.file ?? 'main/app_main.c')
   const code = String(args.code ?? '')
+  if (!code.trim()) return { ok: false, error: 'write_firmware called with empty code. Include the full source in the "code" parameter.' }
   useStore.getState().setCustomCode(file, code)
   return { ok: true, data: { file, bytes: code.length } }
 }
@@ -405,6 +429,7 @@ const HANDLERS: Record<string, Handler> = {
   list_catalog:     () => handleListCatalog(),
   add_component:    (args) => handleAddComponent(args),
   remove_component: (args) => handleRemoveComponent(args),
+  remove_net:       (args) => handleRemoveNet(args),
   connect:          (args) => handleConnect(args),
   run_drc:          () => handleRunDrc(),
   read_firmware:    (args) => handleReadFirmware(args),

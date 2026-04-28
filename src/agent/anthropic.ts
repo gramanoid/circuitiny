@@ -6,10 +6,12 @@ import { tools, execTool, makeExecContext } from './tools'
 import type { Msg, AgentCallbacks, ProviderConfig } from './types'
 
 // Convert our OpenAI-format tool list to Anthropic format.
-const anthropicTools = tools.map((t) => ({
+// Mark the last tool with cache_control so the entire tool list is cached.
+const anthropicTools = tools.map((t, i) => ({
   name: t.function.name,
   description: t.function.description,
   input_schema: t.function.parameters,
+  ...(i === tools.length - 1 ? { cache_control: { type: 'ephemeral' } } : {}),
 }))
 
 // Convert the shared Msg[] conversation to Anthropic's messages array.
@@ -85,12 +87,13 @@ export async function chatAnthropic(
           'Content-Type': 'application/json',
           'x-api-key': cfg.apiKey ?? '',
           'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'prompt-caching-2024-07-31',
           'anthropic-dangerous-direct-browser-access': 'true',
         },
         body: JSON.stringify({
           model: cfg.model,
-          max_tokens: 2048,
-          system: system || undefined,
+          max_tokens: 8192,
+          system: system ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : undefined,
           messages,
           tools: anthropicTools,
           stream: true,

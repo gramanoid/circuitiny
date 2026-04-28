@@ -215,7 +215,7 @@ function DefaultBody({ componentId, schematicSymbol, onClick, selected, lit, isB
   simActive?: boolean
 }) {
   // WS2812B LED strip: animated rainbow, each LED at a different phase.
-  if (componentId === 'ws2812b-strip' || schematicSymbol === 'ledstrip') {
+  if (schematicSymbol === 'ledstrip') {
     return <LedStripBody lit={lit} onClick={onClick} />
   }
   // LED: dome + two leads.
@@ -388,7 +388,10 @@ function Nets({ violations }: { violations: Violation[] }) {
             <CubicBezierLine key={`${net.id}-${i}`}
               start={a.position} midA={ca} midB={cb} end={b.position}
               color={baseColor} lineWidth={isError ? 3 : 2}
-              onContextMenu={(e: any) => { e.stopPropagation(); removeNet(net.id) }} />
+              onContextMenu={(e: any) => {
+                e.stopPropagation()
+                if (window.confirm(`Delete connection between ${net.endpoints.join(' and ')}?`)) removeNet(net.id)
+              }} />
           )
         }
         return segments

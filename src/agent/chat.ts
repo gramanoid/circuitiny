@@ -46,7 +46,14 @@ function trimHistory(history: Msg[], systemPrompt: string): Msg[] {
     budget -= t
     kept.unshift(history[i])
   }
-  return [sysMsg, ...kept]
+
+  // Drop orphaned tool_result messages: if the assistant message that issued
+  // the matching tool_use was cut by the budget, Anthropic rejects the request
+  // with a 400 "unexpected tool_use_id" error.
+  const keptToolUseIds = new Set(kept.flatMap(m => m.tool_calls?.map(tc => tc.id) ?? []))
+  const clean = kept.filter(m => m.role !== 'tool' || keptToolUseIds.has(m.tool_call_id ?? ''))
+
+  return [sysMsg, ...clean]
 }
 
 export async function chat(

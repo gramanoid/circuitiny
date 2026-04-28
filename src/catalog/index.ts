@@ -303,22 +303,6 @@ const xiaoS3: BoardDef = {
   ]
 }
 
-const ws2812bStrip: ComponentDef = {
-  id: 'ws2812b-strip',
-  name: 'WS2812B LED Strip (8)',
-  version: '0.1.0',
-  category: 'actuator',
-  model: '',
-  pins: [
-    { id: 'vcc',  label: '5V',   type: 'power_in',  position: [-0.018, -0.003, 0], normal: [0, -1, 0] },
-    { id: 'gnd',  label: 'GND',  type: 'ground',     position: [-0.006, -0.003, 0], normal: [0, -1, 0] },
-    { id: 'din',  label: 'DIN',  type: 'digital_in', position: [ 0.006, -0.003, 0], normal: [0, -1, 0] },
-    { id: 'dout', label: 'DOUT', type: 'digital_out', position: [ 0.018, -0.003, 0], normal: [0, -1, 0] },
-  ],
-  power: { current_ma: 120, rail: '5v' },
-  schematic: { symbol: 'ledstrip' },
-  sim: { role: 'ledstrip', outputPin: 'din' },
-}
 
 const resistor220: ComponentDef = {
   id: 'resistor-220r',
@@ -417,7 +401,6 @@ const freenoveWrover: BoardDef = {
 
 const components: Record<string, ComponentDef> = {
   [ledRed.id]:        ledRed,
-  [ws2812bStrip.id]:  ws2812bStrip,
   [resistor220.id]:   resistor220,
   [button6mm.id]:     button6mm,
 }
