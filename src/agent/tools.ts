@@ -306,11 +306,14 @@ async function executeInternal(
             board: s.project.board,
             target: s.project.target,
             components: s.project.components.map(c => ({
-              instance: c.instance, componentId: c.componentId, pinAssignments: c.pinAssignments
+              instance: c.instance, componentId: c.componentId
             })),
-            nets: s.project.nets,
-            behaviors: s.project.behaviors,
-            drc: { errors: drc.errors.length, warnings: drc.warnings.length },
+            nets: s.project.nets.map(n => ({ id: n.id, endpoints: n.endpoints })),
+            behaviors: s.project.behaviors.map(b => ({
+              id: b.id, trigger: b.trigger.type, actions: b.actions.length
+            })),
+            drc: { errors: drc.errors.length, warnings: drc.warnings.length,
+                   messages: [...drc.errors, ...drc.warnings].slice(0, 5) },
             customFirmwareFiles: Object.keys(s.project.customCode ?? {}),
           }
         }
@@ -322,11 +325,8 @@ async function executeInternal(
           data: {
             components: catalog.listComponents().map(c => ({
               id: c.id, name: c.name, category: c.category,
-              pins: c.pins.map(p => ({ id: p.id, label: p.label, type: p.type }))
+              pins: c.pins.map(p => p.id)
             })),
-            boardPins: catalog.getBoard(s.project.board)?.pins.map(p => ({
-              id: p.id, label: p.label, type: p.type
-            })) ?? []
           }
         }
       }
@@ -378,7 +378,10 @@ async function executeInternal(
 
       case 'run_drc': {
         const drc = runDrc(s.project)
-        return { ok: true, data: drc }
+        return { ok: true, data: {
+          errors: drc.errors.length, warnings: drc.warnings.length,
+          messages: [...drc.errors, ...drc.warnings]
+        }}
       }
 
       case 'read_firmware': {

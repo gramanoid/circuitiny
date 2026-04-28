@@ -24,6 +24,31 @@ Electronics safety rules — apply these automatically without waiting for the u
 
 When you are about to add a component that needs a companion part, add the companion first, then wire everything together in the correct order. Tell the user briefly what you added and why.`
 
+// Rough token estimate: ~4 chars per token.
+function estimateTokens(msg: Msg): number {
+  let text = msg.content ?? ''
+  if (msg.tool_calls) text += JSON.stringify(msg.tool_calls)
+  return Math.ceil(text.length / 4)
+}
+
+// Keep the system prompt + the most recent messages that fit within TOKEN_BUDGET.
+// Always preserves structural integrity: never drops the last user message.
+const TOKEN_BUDGET = 6_000
+
+function trimHistory(history: Msg[], systemPrompt: string): Msg[] {
+  const sysMsg: Msg = { role: 'system', content: systemPrompt }
+  const sysTokens = estimateTokens(sysMsg)
+  let budget = TOKEN_BUDGET - sysTokens
+  const kept: Msg[] = []
+  for (let i = history.length - 1; i >= 0; i--) {
+    const t = estimateTokens(history[i])
+    if (budget - t < 0) break
+    budget -= t
+    kept.unshift(history[i])
+  }
+  return [sysMsg, ...kept]
+}
+
 export async function chat(
   history: Msg[],
   userMessage: string,
@@ -35,9 +60,9 @@ export async function chat(
     ? { ...cfg, maxToolLoops: cfg.maxToolLoops ?? 48 }
     : cfg
 
+  const trimmed = trimHistory(history, systemPrompt)
   const conv: Msg[] = [
-    ...(history.length === 0 ? [{ role: 'system' as const, content: systemPrompt }] : []),
-    ...history,
+    ...trimmed,
     { role: 'user', content: userMessage },
   ]
   cb.onMessage({ role: 'user', content: userMessage })

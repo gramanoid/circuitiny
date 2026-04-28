@@ -14,11 +14,56 @@ function loadCfg() {
 }
 function saveCfg(o: object) { localStorage.setItem(LS_KEY, JSON.stringify(o)) }
 
-const PROVIDER_MODELS: Record<ProviderType, string[]> = {
-  ollama:     ['qwen3.5:latest', 'qwen3:8b', 'gemma4:e4b', 'llama3.2:latest'],
+const FALLBACK_MODELS: Record<ProviderType, string[]> = {
+  ollama:     [],
   openai:     ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
   anthropic:  ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'],
   openrouter: ['anthropic/claude-sonnet-4-6', 'openai/gpt-4o', 'meta-llama/llama-3.3-70b-instruct', 'google/gemini-2.5-flash'],
+}
+
+async function fetchModels(provider: ProviderType, apiKey: string, baseUrl: string): Promise<string[]> {
+  try {
+    const sig = AbortSignal.timeout(5000)
+    if (provider === 'ollama') {
+      const base = baseUrl.replace(/\/$/, '') || 'http://localhost:11434'
+      const res = await fetch(`${base}/api/tags`, { signal: sig })
+      if (!res.ok) return []
+      const data = await res.json()
+      return (data.models as { name: string }[]).map((m) => m.name).sort()
+    }
+    if (provider === 'openai') {
+      if (!apiKey) return FALLBACK_MODELS.openai
+      const base = baseUrl.replace(/\/$/, '') || 'https://api.openai.com'
+      const res = await fetch(`${base}/v1/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` }, signal: sig
+      })
+      if (!res.ok) return FALLBACK_MODELS.openai
+      const data = await res.json()
+      return (data.data as { id: string }[])
+        .map((m) => m.id)
+        .filter((id) => /^(gpt-|o1|o3|chatgpt)/.test(id))
+        .sort()
+    }
+    if (provider === 'anthropic') {
+      if (!apiKey) return FALLBACK_MODELS.anthropic
+      const res = await fetch('https://api.anthropic.com/v1/models', {
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }, signal: sig
+      })
+      if (!res.ok) return FALLBACK_MODELS.anthropic
+      const data = await res.json()
+      return (data.data as { id: string }[]).map((m) => m.id).sort().reverse()
+    }
+    if (provider === 'openrouter') {
+      if (!apiKey) return FALLBACK_MODELS.openrouter
+      const res = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: { Authorization: `Bearer ${apiKey}` }, signal: sig
+      })
+      if (!res.ok) return FALLBACK_MODELS.openrouter
+      const data = await res.json()
+      return (data.data as { id: string }[]).map((m) => m.id).sort()
+    }
+  } catch { /* fall through */ }
+  return FALLBACK_MODELS[provider]
 }
 
 export default function ChatPane() {
@@ -29,6 +74,7 @@ export default function ChatPane() {
   const [baseUrl, setBaseUrl]       = useState<string>(saved.baseUrl ?? '')
   const [showCfg, setShowCfg]       = useState(false)
   const [expertMode, setExpertMode] = useState<boolean>(() => localStorage.getItem(LS_EXPERT) === 'true')
+  const [dynamicModels, setDynamicModels] = useState<string[]>([])
 
   const projectName = useStore((s) => s.project.name)
 
@@ -48,6 +94,18 @@ export default function ChatPane() {
     setMsgs(loadChatHistory(projectName))
   }, [projectName])
 
+  // Fetch available models whenever provider, key, or endpoint changes
+  useEffect(() => {
+    setDynamicModels([])
+    fetchModels(provider, apiKey, baseUrl).then((list) => {
+      setDynamicModels(list)
+      if (list.length > 0 && !list.includes(model)) {
+        setModel(list[0])
+        saveCfg({ provider, model: list[0], apiKey, baseUrl })
+      }
+    })
+  }, [provider, apiKey, baseUrl])
+
   // Persist history whenever messages change (strip streaming markers before saving)
   useEffect(() => {
     saveChatHistory(projectName, msgs.map(({ _sid: _, ...m }) => m))
@@ -57,7 +115,7 @@ export default function ChatPane() {
 
   function onProviderChange(p: ProviderType) {
     setProvider(p)
-    const m = PROVIDER_MODELS[p][0]
+    const m = FALLBACK_MODELS[p][0] ?? ''
     setModel(m)
     setBaseUrl('')
     saveCfg({ provider: p, model: m, apiKey, baseUrl: '' })
@@ -171,7 +229,8 @@ export default function ChatPane() {
 
         <select value={model} onChange={(e) => onModelChange(e.target.value)}
                 style={{ ...inputStyle, flex: 1, minWidth: 0 }}>
-          {PROVIDER_MODELS[provider].map((m) => <option key={m} value={m}>{m}</option>)}
+          {(dynamicModels.length > 0 ? dynamicModels : [model])
+            .map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
 
         <button onClick={toggleExpert}
@@ -262,6 +321,10 @@ export default function ChatPane() {
 
 function Message({ m }: { m: Msg }) {
   const [thinkOpen, setThinkOpen] = useState(false)
+  const html = useMemo(() => {
+    if (m.role !== 'user' && m.role !== 'assistant') return ''
+    return marked.parse(m.content, { async: false }) as string
+  }, [m.role, m.content])
 
   if (m.role === 'tool') {
     // think results carry no user-visible information — suppress them
@@ -310,7 +373,6 @@ function Message({ m }: { m: Msg }) {
 
   const bg = m.role === 'user' ? '#1f2a40' : '#1a1a1a'
   const tag = m.role === 'user' ? 'you' : 'agent'
-  const html = useMemo(() => marked.parse(m.content, { async: false }) as string, [m.content])
   return (
     <div style={{ margin: '4px 0', padding: '6px 8px', background: bg,
                   borderRadius: 3, border: '1px solid #2a2a2a' }}>

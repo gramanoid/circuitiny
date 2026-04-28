@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, Component, type ReactNode, type ErrorInfo } from 'react'
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels'
 import Viewer3D from './panes/Viewer3D'
 import SchematicTabs from './panes/SchematicTabs'
@@ -131,11 +131,41 @@ function CatalogEditorMode() {
   )
 }
 
+class ErrorBoundary extends Component<
+  { children: ReactNode; label: string },
+  { error: Error | null }
+> {
+  state = { error: null }
+  static getDerivedStateFromError(error: Error) { return { error } }
+  componentDidCatch(_err: Error, info: ErrorInfo) {
+    console.error('[Circuitiny] render error in', this.props.label, info.componentStack)
+  }
+  render() {
+    if (this.state.error) {
+      const msg = (this.state.error as Error).message
+      return (
+        <div style={{ padding: 16, color: '#ff6b6b', fontFamily: 'monospace', fontSize: 11 }}>
+          <strong>Render error in {this.props.label}</strong>
+          <pre style={{ marginTop: 8, whiteSpace: 'pre-wrap', color: '#aaa' }}>{msg}</pre>
+          <button onClick={() => this.setState({ error: null })}
+                  style={{ marginTop: 8, padding: '4px 10px', fontSize: 11, cursor: 'pointer',
+                           background: 'transparent', color: '#aaa', border: '1px solid #444', borderRadius: 3 }}>
+            retry
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 function PaneFrame({ title, children, noPad }: { title: string; children: React.ReactNode; noPad?: boolean }) {
   return (
     <section className="pane" style={{ height: '100%' }}>
       <header>{title}</header>
-      <div className="body" style={noPad ? { padding: 0, overflow: 'hidden' } : undefined}>{children}</div>
+      <div className="body" style={noPad ? { padding: 0, overflow: 'hidden' } : undefined}>
+        <ErrorBoundary label={title}>{children}</ErrorBoundary>
+      </div>
     </section>
   )
 }

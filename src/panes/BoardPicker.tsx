@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { catalog } from '../catalog'
 import { useStore } from '../store'
 import type { BoardDef } from '../project/component'
@@ -125,6 +125,13 @@ function PinDots({ count, color }: { count: number; color: string }) {
 
 export default function BoardPicker() {
   const createProject = useStore((s) => s.createProject)
+  const close = () => useStore.setState({ showBoardPicker: false })
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
   const [filter, setFilter] = useState<ChipFilter>('All')
   const [selectedBoardId, setSelectedBoardId] = useState('esp32-devkitc-v4')
   const [projectName, setProjectName] = useState('untitled')
@@ -138,12 +145,12 @@ export default function BoardPicker() {
   const selectedBoard = catalog.getBoard(selectedBoardId)
 
   return (
-    <div style={{
+    <div onClick={close} style={{
       position: 'fixed', inset: 0, zIndex: 1000,
       background: 'rgba(0,0,0,0.8)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
     }}>
-      <div style={{
+      <div onClick={(e) => e.stopPropagation()} style={{
         background: '#141414',
         border: '1px solid #333',
         borderRadius: 10,
@@ -155,11 +162,18 @@ export default function BoardPicker() {
         overflow: 'hidden',
       }}>
         {/* Header */}
-        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #2a2a2a' }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#eee' }}>Select a Board</h2>
-          <p style={{ margin: '4px 0 0', fontSize: 12, color: '#666' }}>
-            Choose the ESP32 board for your new project
-          </p>
+        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #2a2a2a',
+                      display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#eee' }}>Select a Board</h2>
+            <p style={{ margin: '4px 0 0', fontSize: 12, color: '#666' }}>
+              Choose the ESP32 board for your new project
+            </p>
+          </div>
+          <button onClick={close} style={{
+            background: 'transparent', border: 'none', color: '#666', fontSize: 18,
+            cursor: 'pointer', lineHeight: 1, padding: '0 2px', marginLeft: 16,
+          }} title="Close">✕</button>
         </div>
 
         {/* Filter tabs */}
