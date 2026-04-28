@@ -276,6 +276,81 @@ function DefaultBody({ componentId, schematicSymbol, onClick, selected, lit, isB
   )
 }
 
+// Renders the OLED 3D model + a canvas texture plane laid on its screen surface.
+function OledDisplayBody({ url, scale = 1, lit, simActive, simLog }: {
+  url: string; scale?: number; lit?: boolean; simActive?: boolean; simLog: string[]
+}) {
+  const gltf = useGLTF(url)
+  const scene = useMemo(() => gltf.scene.clone(true), [gltf])
+
+  // Compute screen-plane dimensions from the model bounding box.
+  // The OLED screen occupies roughly the upper 55% of a typical module, so we
+  // use a conservative height (40%) centered on the model to stay inside the screen.
+  const { topY, screenW, screenH, offsetZ } = useMemo(() => {
+    const box = new THREE.Box3().setFromObject(scene)
+    const size = box.getSize(new THREE.Vector3())
+    return {
+      topY: box.max.y * scale + 0.00008,
+      screenW: size.x * scale * 0.62,
+      screenH: size.z * scale * 0.38,
+      offsetZ: -size.z * scale * 0.08,
+    }
+  }, [scene, scale])
+
+  // Draw log lines onto a transparent canvas so the blue GLB screen shows through.
+  // Canvas H is derived from the real screen aspect ratio to prevent stretching.
+  const texture = useMemo(() => {
+    const W = 512
+    const aspect = screenW > 0 && screenH > 0 ? screenW / screenH : 1
+    const H = Math.round(W / aspect)
+    const canvas = document.createElement('canvas')
+    canvas.width = W; canvas.height = H
+    const ctx = canvas.getContext('2d')!
+    ctx.clearRect(0, 0, W, H)
+    const lines = simLog.slice(-4)
+    const lineH = Math.floor((H - 8) / Math.max(lines.length, 1))
+    // Cap so ~20 monospace chars fit per line (char ≈ 0.6 × fontSize)
+    const fontSize = Math.min(Math.floor((W - 12) / (20 * 0.6)), lineH - 4)
+    ctx.font = `bold ${fontSize}px "SF Mono", Menlo, monospace`
+    ctx.shadowColor = 'rgba(0,0,0,0.9)'
+    ctx.shadowBlur = 3
+    lines.forEach((line, i) => {
+      ctx.fillStyle = line.startsWith('⚠') ? '#ffee44' : '#ffffff'
+      // Extract just the message content, strip "[id] level: " prefix
+      const match = line.match(/^\[.*?\]\s+\w+:\s*(.+)$/)
+      const raw = match ? match[1] : line.replace(/^⚠\s*/, '')
+      // Truncate to fit without compressing characters
+      let text = raw
+      while (text.length > 1 && ctx.measureText(text).width > W - 12) text = text.slice(0, -1)
+      if (text.length < raw.length) text += '…'
+      ctx.fillText(text, 6, fontSize + 4 + i * lineH)
+    })
+    return new THREE.CanvasTexture(canvas)
+  }, [simLog, screenW, screenH])
+  useEffect(() => () => { texture.dispose() }, [texture])
+
+  useEffect(() => {
+    scene.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return
+      const mat = child.material as THREE.MeshStandardMaterial
+      if (!mat) return
+      mat.emissive = lit ? new THREE.Color('#ff2200') : simActive ? new THREE.Color('#0044ff') : new THREE.Color('#000')
+      mat.emissiveIntensity = lit ? 1.5 : simActive ? 0.8 : 0
+    })
+  }, [scene, lit, simActive])
+
+  return (
+    <group>
+      <primitive object={scene} scale={[scale, scale, scale]} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, topY, offsetZ]}>
+        <planeGeometry args={[screenW, screenH]} />
+        <meshBasicMaterial map={texture} transparent opacity={0.93} />
+      </mesh>
+      {lit && <pointLight position={[0, 0.004, 0]} intensity={0.03} distance={0.06} color="#ff4400" />}
+    </group>
+  )
+}
+
 function ComponentWithPins({ c, selected, lit, simActive }: {
   c: ComponentInstance; selected: boolean; lit: boolean; simActive: boolean
 }) {
@@ -284,6 +359,7 @@ function ComponentWithPins({ c, selected, lit, simActive }: {
   const clickPin = useStore((s) => s.clickPin)
   const move = useStore((s) => s.moveComponent)
   const simulating = useStore((s) => s.simulating)
+  const simLog = useStore((s) => s.simLog)
   const pressButton = useStore((s) => s.pressButton)
   const releaseButton = useStore((s) => s.releaseButton)
   const def = catalog.getComponent(c.componentId)
@@ -292,6 +368,7 @@ function ComponentWithPins({ c, selected, lit, simActive }: {
   const groupRef = useRef<THREE.Group>(null)
 
   const isButton = def?.sim?.role === 'button'
+  const isDisplay = def?.sim?.role === 'display' || resolveSchematicSymbol(def?.schematic) === 'display'
 
   function resolveButtonLabel(): string | null {
     if (!def?.sim?.inputPin) return null
@@ -325,11 +402,13 @@ function ComponentWithPins({ c, selected, lit, simActive }: {
   const content = (
     <group ref={groupRef} position={pos}>
       <group onPointerDown={handlePointerDown} onPointerUp={handlePointerUp}>
-        {glbUrl
-          ? <LoadedGlb url={glbUrl} scale={def?.scale ?? 1} lit={lit} simActive={simActive} />
-          : <DefaultBody componentId={c.componentId} schematicSymbol={resolveSchematicSymbol(def?.schematic)} selected={selected} lit={lit}
-                         isButton={isButton} simActive={simActive}
-                         onClick={() => {}} />}
+        {isDisplay && glbUrl && simulating
+          ? <OledDisplayBody url={glbUrl} scale={def?.scale ?? 1} lit={lit} simActive={simActive} simLog={simLog} />
+          : glbUrl
+            ? <LoadedGlb url={glbUrl} scale={def?.scale ?? 1} lit={lit} simActive={simActive} />
+            : <DefaultBody componentId={c.componentId} schematicSymbol={resolveSchematicSymbol(def?.schematic)} selected={selected} lit={lit}
+                           isButton={isButton} simActive={simActive}
+                           onClick={() => {}} />}
       </group>
       {def?.pins.map((p) => {
         const ref = `${c.instance}.${p.id}`
