@@ -303,6 +303,23 @@ const xiaoS3: BoardDef = {
   ]
 }
 
+const ws2812bStrip: ComponentDef = {
+  id: 'ws2812b-strip',
+  name: 'WS2812B LED Strip (8)',
+  version: '0.1.0',
+  category: 'actuator',
+  model: '',
+  pins: [
+    { id: 'vcc',  label: '5V',   type: 'power_in',  position: [-0.018, -0.003, 0], normal: [0, -1, 0] },
+    { id: 'gnd',  label: 'GND',  type: 'ground',     position: [-0.006, -0.003, 0], normal: [0, -1, 0] },
+    { id: 'din',  label: 'DIN',  type: 'digital_in', position: [ 0.006, -0.003, 0], normal: [0, -1, 0] },
+    { id: 'dout', label: 'DOUT', type: 'digital_out', position: [ 0.018, -0.003, 0], normal: [0, -1, 0] },
+  ],
+  power: { current_ma: 120, rail: '5v' },
+  schematic: { symbol: 'ledstrip' },
+  sim: { role: 'ledstrip', outputPin: 'din' },
+}
+
 const resistor220: ComponentDef = {
   id: 'resistor-220r',
   name: 'Resistor 220Ω',
@@ -399,9 +416,10 @@ const freenoveWrover: BoardDef = {
 }
 
 const components: Record<string, ComponentDef> = {
-  [ledRed.id]:     ledRed,
-  [resistor220.id]: resistor220,
-  [button6mm.id]:  button6mm,
+  [ledRed.id]:        ledRed,
+  [ws2812bStrip.id]:  ws2812bStrip,
+  [resistor220.id]:   resistor220,
+  [button6mm.id]:     button6mm,
 }
 const boards: Record<string, BoardDef> = {
   [devkitc.id]:         devkitc,
@@ -428,31 +446,17 @@ export const catalog = {
   }
 }
 
-// Color a pin anchor by its electrical role.
-export function pinColor(type: PinType): string {
-  switch (type) {
-    default: return '#888'
-    case 'power_in':
-    case 'power_out': return '#ff3b30'
-    case 'ground':    return '#444'
-    case 'digital_io':
-    case 'digital_in':
-    case 'digital_out': return '#5ac8fa'
-    case 'analog_in':
-    case 'analog_out':  return '#34c759'
-    case 'i2c_sda':
-    case 'i2c_scl':     return '#ffcc00'
-    case 'spi_mosi':
-    case 'spi_miso':
-    case 'spi_sck':
-    case 'spi_cs':      return '#af52de'
-    case 'uart_tx':
-    case 'uart_rx':     return '#ff9500'
-    case 'i2s_bclk':
-    case 'i2s_lrclk':
-    case 'i2s_din':
-    case 'i2s_dout':    return '#ff2d92'
-    case 'pwm':         return '#00c7be'
-    case 'nc':          return '#222'
-  }
+const PIN_COLORS: Partial<Record<PinType, string>> = {
+  power_in:    '#ff3b30', power_out:   '#ff3b30',
+  ground:      '#444',
+  digital_io:  '#5ac8fa', digital_in:  '#5ac8fa', digital_out: '#5ac8fa',
+  analog_in:   '#34c759', analog_out:  '#34c759',
+  i2c_sda:     '#ffcc00', i2c_scl:     '#ffcc00',
+  spi_mosi:    '#af52de', spi_miso:    '#af52de', spi_sck: '#af52de', spi_cs: '#af52de',
+  uart_tx:     '#ff9500', uart_rx:     '#ff9500',
+  i2s_bclk:    '#ff2d92', i2s_lrclk:  '#ff2d92', i2s_din: '#ff2d92', i2s_dout: '#ff2d92',
+  pwm:         '#00c7be',
+  nc:          '#222',
 }
+
+export const pinColor = (type: PinType): string => PIN_COLORS[type] ?? '#888'

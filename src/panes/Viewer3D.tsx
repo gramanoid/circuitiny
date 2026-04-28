@@ -1,10 +1,11 @@
-import { Canvas, type ThreeEvent } from '@react-three/fiber'
+import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, Grid, Environment, Html, CubicBezierLine, TransformControls, useGLTF } from '@react-three/drei'
 import { useStore } from '../store'
 import React, { Suspense, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import * as THREE from 'three'
 import type { ComponentInstance } from '../project/schema'
 import type { PinDef } from '../project/component'
+import { resolveSchematicSymbol } from '../project/component'
 import { catalog, pinColor } from '../catalog'
 import { resolvePin, netColor } from '../project/pins'
 import { runDrc, suggestSafePin, type Violation } from '../drc'
@@ -157,14 +158,66 @@ function LoadedGlb({ url, scale = 1, lit, simActive }: {
   )
 }
 
-function DefaultBody({ componentId, onClick, selected, lit, isButton, simActive }: {
+// Animated WS2812B strip — each LED runs a rainbow at a different phase.
+// Extracted as its own component so useFrame works correctly.
+const LED_N = 8
+const LED_SPACING = 0.006
+const LED_START_X = -((LED_N - 1) * LED_SPACING) / 2
+
+function LedStripBody({ lit, onClick }: { lit?: boolean; onClick: (e: ThreeEvent<MouseEvent>) => void }) {
+  const meshRefs = useRef<(THREE.Mesh | null)[]>(Array(LED_N).fill(null))
+  const lightRefs = useRef<(THREE.PointLight | null)[]>(Array(LED_N).fill(null))
+  const t = useRef(0)
+
+  useFrame((_, delta) => {
+    if (!lit) return
+    t.current += delta * 0.8
+    meshRefs.current.forEach((mesh, i) => {
+      if (!mesh) return
+      const mat = mesh.material as THREE.MeshStandardMaterial
+      const hue = (t.current + i / LED_N) % 1
+      const col = new THREE.Color().setHSL(hue, 1, 0.5)
+      mat.color.copy(col)
+      mat.emissive.copy(col)
+      mat.emissiveIntensity = 3.5
+      const light = lightRefs.current[i]
+      if (light) { light.color.copy(col); light.intensity = 0.008 }
+    })
+  })
+
+  return (
+    <group onClick={onClick}>
+      <mesh position={[0, -0.0005, 0]}>
+        <boxGeometry args={[LED_N * LED_SPACING + 0.004, 0.001, 0.009]} />
+        <meshStandardMaterial color="#1a3a1a" roughness={0.7} />
+      </mesh>
+      {Array.from({ length: LED_N }, (_, i) => (
+        <group key={i} position={[LED_START_X + i * LED_SPACING, 0.001, 0]}>
+          <mesh ref={(el) => { meshRefs.current[i] = el }}>
+            <boxGeometry args={[0.004, 0.002, 0.004]} />
+            <meshStandardMaterial color={lit ? '#ff2200' : '#111'} emissive={lit ? '#ff0000' : '#000'} emissiveIntensity={lit ? 3.5 : 0} />
+          </mesh>
+          <pointLight ref={(el) => { lightRefs.current[i] = el }}
+            position={[0, 0.003, 0]} intensity={lit ? 0.008 : 0} distance={0.03} color="#ff2200" />
+        </group>
+      ))}
+    </group>
+  )
+}
+
+function DefaultBody({ componentId, schematicSymbol, onClick, selected, lit, isButton, simActive }: {
   componentId: string
+  schematicSymbol?: string
   onClick: (e: ThreeEvent<MouseEvent>) => void
   selected: boolean
   lit?: boolean
   isButton?: boolean
   simActive?: boolean
 }) {
+  // WS2812B LED strip: animated rainbow, each LED at a different phase.
+  if (componentId === 'ws2812b-strip' || schematicSymbol === 'ledstrip') {
+    return <LedStripBody lit={lit} onClick={onClick} />
+  }
   // LED: dome + two leads.
   if (componentId === 'led-5mm-red') {
     const emissive = lit ? '#ff3030' : (selected ? '#551100' : '#220000')
@@ -274,7 +327,7 @@ function ComponentWithPins({ c, selected, lit, simActive }: {
       <group onPointerDown={handlePointerDown} onPointerUp={handlePointerUp}>
         {glbUrl
           ? <LoadedGlb url={glbUrl} scale={def?.scale ?? 1} lit={lit} simActive={simActive} />
-          : <DefaultBody componentId={c.componentId} selected={selected} lit={lit}
+          : <DefaultBody componentId={c.componentId} schematicSymbol={resolveSchematicSymbol(def?.schematic)} selected={selected} lit={lit}
                          isButton={isButton} simActive={simActive}
                          onClick={() => {}} />}
       </group>
@@ -348,6 +401,32 @@ const FIXABLE = new Set<string>([
   'gpio.input_only', 'gpio.flash_pin', 'gpio.strapping'
 ])
 
+type Net = ReturnType<typeof useStore.getState>['project']['nets'][number]
+
+function findNetId(nets: Net[], endpoints: string[]): string | null {
+  const set = new Set(endpoints)
+  return nets.find(n => n.endpoints.length === endpoints.length && n.endpoints.every(e => set.has(e)))?.id ?? null
+}
+
+function ViolationRow({ v, netId, safe, onFix }: { v: Violation; netId: string | null; safe: string | null; onFix: () => void }) {
+  return (
+    <div style={{ marginBottom: 4, padding: 4,
+                  borderLeft: `3px solid ${v.severity === 'error' ? '#ff3b30' : '#ffcc00'}`,
+                  background: '#1a1a1a' }}>
+      <div>{v.message}</div>
+      <div style={{ fontSize: 9, color: '#888' }}>{v.involves.join(' ↔ ')}</div>
+      {netId && safe && (
+        <button onClick={onFix}
+                style={{ marginTop: 4, background: '#2a3140', color: '#fff',
+                         border: '1px solid #4a90d9', borderRadius: 2, padding: '2px 8px',
+                         fontSize: 10, cursor: 'pointer' }}>
+          Fix → board.{safe}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function DrcOverlay({ result }: { result: ReturnType<typeof runDrc> }) {
   const project = useStore((s) => s.project)
   const rewire = useStore((s) => s.rewireBoardPin)
@@ -356,13 +435,6 @@ function DrcOverlay({ result }: { result: ReturnType<typeof runDrc> }) {
   const [dismissedSig, setDismissedSig] = useState<string | null>(null)
   if (all.length === 0) return null
   if (dismissedSig === sig) return null
-
-  const findNetId = (endpoints: string[]): string | null => {
-    const set = new Set(endpoints)
-    const match = project.nets.find((n) =>
-      n.endpoints.length === endpoints.length && n.endpoints.every((e) => set.has(e)))
-    return match?.id ?? null
-  }
 
   return (
     <div style={{
@@ -382,24 +454,9 @@ function DrcOverlay({ result }: { result: ReturnType<typeof runDrc> }) {
                          lineHeight: '16px' }}>×</button>
       </div>
       {all.map((v, i) => {
-        const netId = FIXABLE.has(v.id) ? findNetId(v.involves) : null
+        const netId = FIXABLE.has(v.id) ? findNetId(project.nets, v.involves) : null
         const safe = netId ? suggestSafePin(project, netId) : null
-        return (
-          <div key={i} style={{ marginBottom: 4, padding: 4,
-                                borderLeft: `3px solid ${v.severity === 'error' ? '#ff3b30' : '#ffcc00'}`,
-                                background: '#1a1a1a' }}>
-            <div>{v.message}</div>
-            <div style={{ fontSize: 9, color: '#888' }}>{v.involves.join(' ↔ ')}</div>
-            {netId && safe && (
-              <button onClick={() => rewire(netId, safe)}
-                      style={{ marginTop: 4, background: '#2a3140', color: '#fff',
-                               border: '1px solid #4a90d9', borderRadius: 2, padding: '2px 8px',
-                               fontSize: 10, cursor: 'pointer' }}>
-                Fix → board.{safe}
-              </button>
-            )}
-          </div>
-        )
+        return <ViolationRow key={i} v={v} netId={netId} safe={safe} onFix={() => rewire(netId!, safe!)} />
       })}
     </div>
   )
@@ -531,11 +588,39 @@ interface SimStates {
   active: Set<string>  // input instances wired to a board GPIO (buttons ready to fire)
 }
 
+type Project = ReturnType<typeof useStore.getState>['project']
+type BoardDef = NonNullable<ReturnType<typeof catalog.getBoard>>
+
+// Returns true if the ledstrip's DIN pin is reachable from a board GPIO.
+function isLedstripLit(c: ComponentInstance, def: NonNullable<ReturnType<typeof catalog.getComponent>>, project: Project): boolean {
+  const dinId = def.sim?.outputPin ?? def.pins.find(p => p.type === 'digital_in')?.id
+  if (!dinId) return false
+  return !!findBoardGpio(project, `${c.instance}.${dinId}`)
+}
+
+// Returns true if an output component's GPIO is driven high.
+function isOutputLit(c: ComponentInstance, def: NonNullable<ReturnType<typeof catalog.getComponent>>, project: Project, board: BoardDef, simGpios: Record<string, boolean>): boolean {
+  const { role, outputPin } = def.sim!
+  if (!outputPin) return false
+  if (role !== 'led' && role !== 'buzzer' && role !== 'generic_output' && role !== 'servo' && role !== 'display') return false
+  const boardPinId = findBoardGpio(project, `${c.instance}.${outputPin}`)
+  if (!boardPinId) return false
+  const label = board.pins.find(p => p.id === boardPinId)?.label
+  return !!label && !!simGpios[label]
+}
+
+// Returns active/lit state for input components (buttons, generic inputs).
+function resolveInputState(c: ComponentInstance, def: NonNullable<ReturnType<typeof catalog.getComponent>>, project: Project, board: BoardDef, simGpios: Record<string, boolean>): { active: boolean; lit: boolean } {
+  const { role, inputPin } = def.sim!
+  if (!inputPin || (role !== 'button' && role !== 'generic_input')) return { active: false, lit: false }
+  const boardPinId = findBoardGpio(project, `${c.instance}.${inputPin}`)
+  if (!boardPinId) return { active: false, lit: false }
+  const label = board.pins.find(p => p.id === boardPinId)?.label
+  return { active: true, lit: !!label && !!simGpios[label] }
+}
+
 // Compute per-instance visual states from GPIO map using catalog sim metadata.
-function computeSimStates(
-  project: ReturnType<typeof useStore.getState>['project'],
-  simGpios: Record<string, boolean>
-): SimStates {
+function computeSimStates(project: Project, simGpios: Record<string, boolean>): SimStates {
   const lit = new Set<string>()
   const active = new Set<string>()
   const board = catalog.getBoard(project.board)
@@ -543,24 +628,21 @@ function computeSimStates(
 
   for (const c of project.components) {
     const def = catalog.getComponent(c.componentId)
-    if (!def?.sim) continue
-    const { role, outputPin, inputPin } = def.sim
+    if (!def) continue
 
-    if (outputPin && (role === 'led' || role === 'buzzer' || role === 'generic_output' || role === 'servo' || role === 'display')) {
-      const boardPinId = findBoardGpio(project, `${c.instance}.${outputPin}`)
-      if (!boardPinId) continue
-      const label = board.pins.find((p) => p.id === boardPinId)?.label
-      if (label && simGpios[label]) lit.add(c.instance)
+    const isLedstrip = def.sim?.role === 'ledstrip' || resolveSchematicSymbol(def.schematic) === 'ledstrip'
+    if (isLedstrip) {
+      if (isLedstripLit(c, def, project)) lit.add(c.instance)
+      continue
     }
 
-    if (inputPin && (role === 'button' || role === 'generic_input')) {
-      const boardPinId = findBoardGpio(project, `${c.instance}.${inputPin}`)
-      if (boardPinId) {
-        active.add(c.instance)
-        const label = board.pins.find((p) => p.id === boardPinId)?.label
-        if (label && simGpios[label]) lit.add(c.instance)
-      }
-    }
+    if (!def.sim) continue
+
+    if (isOutputLit(c, def, project, board, simGpios)) lit.add(c.instance)
+
+    const inp = resolveInputState(c, def, project, board, simGpios)
+    if (inp.active) active.add(c.instance)
+    if (inp.lit) lit.add(c.instance)
   }
 
   return { lit, active }

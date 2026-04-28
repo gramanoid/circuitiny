@@ -62,7 +62,7 @@ export function resolveSchematicSymbol(spec: SchematicSymbolSpec | undefined): S
   return 'generic-rect'
 }
 
-export type SimRole = 'led' | 'button' | 'buzzer' | 'servo' | 'display' | 'generic_output' | 'generic_input'
+export type SimRole = 'led' | 'button' | 'buzzer' | 'servo' | 'display' | 'generic_output' | 'generic_input' | 'ledstrip'
 
 export interface SimDef {
   role: SimRole

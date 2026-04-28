@@ -91,12 +91,10 @@ export const tools: ToolDef[] = [
     type: 'function',
     function: {
       name: 'think',
-      description: 'Write private reasoning or a design plan. No side effects — use this to think through the problem, propose a BOM, or plan wiring before acting.',
+      description: 'Private reasoning step, no side effects. Think through the problem before acting.',
       parameters: {
         type: 'object',
-        properties: {
-          reasoning: { type: 'string', description: 'Step-by-step reasoning, analysis, or design plan.' }
-        },
+        properties: { reasoning: { type: 'string' } },
         required: ['reasoning']
       }
     }
@@ -105,12 +103,10 @@ export const tools: ToolDef[] = [
     type: 'function',
     function: {
       name: 'fetch_url',
-      description: 'Fetch a URL and return its readable text content (first 6000 chars). Use to look up Espressif docs, component datasheets, or application notes.',
+      description: 'Fetch a URL and return its text content. Use for Espressif docs or component datasheets.',
       parameters: {
         type: 'object',
-        properties: {
-          url: { type: 'string', description: 'The URL to fetch.' }
-        },
+        properties: { url: { type: 'string' } },
         required: ['url']
       }
     }
@@ -158,75 +154,31 @@ export const tools: ToolDef[] = [
           },
           trigger: {
             type: 'object',
-            description: 'What causes the behavior to fire.',
             properties: {
-              type: {
-                type: 'string',
-                enum: ['boot', 'timer', 'gpio_edge', 'wifi_connected'],
-                description: '"boot" fires once at startup. "timer" fires every period_ms. "gpio_edge" fires when a pin changes. "wifi_connected" fires when Wi-Fi connects.'
-              },
-              period_ms: {
-                type: 'number',
-                description: 'Required for type "timer". Period in milliseconds, e.g. 500.'
-              },
-              source: {
-                type: 'string',
-                description: 'Required for type "gpio_edge". Pin ref that is the input, e.g. "btn1.a" or "board.gpio0".'
-              },
-              edge: {
-                type: 'string',
-                enum: ['rising', 'falling', 'both'],
-                description: 'Required for type "gpio_edge".'
-              }
+              type: { type: 'string', enum: ['boot', 'timer', 'gpio_edge', 'wifi_connected'] },
+              period_ms: { type: 'number', description: 'ms period for timer trigger.' },
+              source: { type: 'string', description: 'Pin ref for gpio_edge, e.g. "btn1.a".' },
+              edge: { type: 'string', enum: ['rising', 'falling', 'both'] }
             },
             required: ['type']
           },
           actions: {
             type: 'array',
-            description: 'Ordered list of actions to perform when the trigger fires.',
             items: {
               type: 'object',
               properties: {
-                type: {
-                  type: 'string',
-                  enum: ['set_output', 'toggle', 'log', 'delay', 'sequence'],
-                  description: '"set_output" drives a pin high or low. "toggle" flips a pin. "log" emits a message in the sim console. "delay" waits ms (note: delays are approximated in the simulator). "sequence" runs a sub-list of actions.'
-                },
-                target: {
-                  type: 'string',
-                  description: 'For set_output / toggle: pin ref to drive, e.g. "led1.anode" or "board.gpio2".'
-                },
-                value: {
-                  type: 'string',
-                  enum: ['on', 'off'],
-                  description: 'For set_output: "on" = high, "off" = low.'
-                },
-                level: {
-                  type: 'string',
-                  enum: ['info', 'warn', 'error'],
-                  description: 'For log action.'
-                },
-                message: {
-                  type: 'string',
-                  description: 'For log action.'
-                },
-                ms: {
-                  type: 'number',
-                  description: 'For delay action: milliseconds to wait.'
-                },
-                actions: {
-                  type: 'array',
-                  description: 'For sequence action: nested actions.',
-                  items: { type: 'object' }
-                }
+                type: { type: 'string', enum: ['set_output', 'toggle', 'log', 'delay', 'sequence'] },
+                target: { type: 'string', description: 'Pin ref, e.g. "led1.anode".' },
+                value: { type: 'string', enum: ['on', 'off'] },
+                level: { type: 'string', enum: ['info', 'warn', 'error'] },
+                message: { type: 'string' },
+                ms: { type: 'number' },
+                actions: { type: 'array', items: { type: 'object' } }
               },
               required: ['type']
             }
           },
-          debounce_ms: {
-            type: 'number',
-            description: 'Optional debounce in ms for gpio_edge triggers.'
-          }
+          debounce_ms: { type: 'number' }
         },
         required: ['id', 'trigger', 'actions']
       }
@@ -290,187 +242,190 @@ export async function execTool(
   return result
 }
 
+type Handler = (args: Record<string, any>, ctx?: ExecContext) => Promise<ToolResult>
+
+async function handleGetProject(): Promise<ToolResult> {
+  const { project } = useStore.getState()
+  const drc = runDrc(project)
+  return {
+    ok: true,
+    data: {
+      board: project.board,
+      target: project.target,
+      components: project.components.map(c => ({ instance: c.instance, componentId: c.componentId })),
+      nets: project.nets.map(n => ({ id: n.id, endpoints: n.endpoints })),
+      behaviors: project.behaviors.map(b => ({ id: b.id, trigger: b.trigger.type, actions: b.actions.length })),
+      drc: { errors: drc.errors.length, warnings: drc.warnings.length,
+             messages: [...drc.errors, ...drc.warnings].slice(0, 5) },
+      customFirmwareFiles: Object.keys(project.customCode ?? {}),
+    }
+  }
+}
+
+async function handleListCatalog(): Promise<ToolResult> {
+  return {
+    ok: true,
+    data: {
+      components: catalog.listComponents().map(c => ({
+        id: c.id, name: c.name, category: c.category, pins: c.pins.map(p => p.id)
+      }))
+    }
+  }
+}
+
+async function handleAddComponent(args: Record<string, any>): Promise<ToolResult> {
+  const s = useStore.getState()
+  if (!catalog.getComponent(args.componentId)) {
+    const ids = catalog.listComponents().map(c => c.id)
+    const near = closestMatches(String(args.componentId ?? ''), ids, 5)
+    return { ok: false, error: `unknown componentId "${args.componentId}". Closest catalog ids: [${near.join(', ')}]. Call list_catalog for the full list.` }
+  }
+  const before = s.project.components.length
+  s.addComponent(args.componentId)
+  const after = useStore.getState().project.components
+  const added = after[after.length - 1]
+  return { ok: true, data: { instance: added.instance, componentId: added.componentId, index: before } }
+}
+
+async function handleRemoveComponent(args: Record<string, any>): Promise<ToolResult> {
+  const { project, removeComponent } = useStore.getState()
+  if (!project.components.find(c => c.instance === args.instance)) {
+    const instances = project.components.map(c => c.instance)
+    return { ok: false, error: `no such instance "${args.instance}". Current instances: [${instances.join(', ') || '(none)'}].` }
+  }
+  removeComponent(args.instance)
+  return { ok: true, data: { removed: args.instance } }
+}
+
+async function handleConnect(args: Record<string, any>): Promise<ToolResult> {
+  const s = useStore.getState()
+  const from = args.from as string, to = args.to as string
+  if (!resolvePin(s.project, from)) return { ok: false, error: `unresolved pin: "${from}". ${pinHint(s.project, from)}` }
+  if (!resolvePin(s.project, to))   return { ok: false, error: `unresolved pin: "${to}". ${pinHint(s.project, to)}` }
+  s.clickPin(from)
+  s.clickPin(to)
+  const after = useStore.getState().project
+  const drc = runDrc(after)
+  return {
+    ok: true,
+    data: {
+      netCount: after.nets.length,
+      drc: { errors: drc.errors.length, warnings: drc.warnings.length,
+             messages: [...drc.errors, ...drc.warnings].slice(0, 5) }
+    }
+  }
+}
+
+async function handleRunDrc(): Promise<ToolResult> {
+  const { project } = useStore.getState()
+  const drc = runDrc(project)
+  return { ok: true, data: { errors: drc.errors.length, warnings: drc.warnings.length,
+                             messages: [...drc.errors, ...drc.warnings].slice(0, 10) } }
+}
+
+async function handleReadFirmware(args: Record<string, any>): Promise<ToolResult> {
+  const { project } = useStore.getState()
+  const file = String(args.file ?? 'main/app_main.c')
+  const code = project.customCode?.[file]
+  if (code === undefined) return { ok: false, error: `No custom firmware found for "${file}". Use write_firmware to create it first.` }
+  return { ok: true, data: { file, code } }
+}
+
+async function handleWriteFirmware(args: Record<string, any>): Promise<ToolResult> {
+  const file = String(args.file ?? 'main/app_main.c')
+  const code = String(args.code ?? '')
+  useStore.getState().setCustomCode(file, code)
+  return { ok: true, data: { file, bytes: code.length } }
+}
+
+async function handleSetBehavior(args: Record<string, any>): Promise<ToolResult> {
+  const behavior: Behavior = {
+    id: String(args.id),
+    trigger: args.trigger as TriggerKind,
+    actions: (args.actions ?? []) as Action[],
+    ...(args.debounce_ms != null ? { debounce_ms: Number(args.debounce_ms) } : {})
+  }
+  useStore.getState().setBehavior(behavior)
+  const all = useStore.getState().project.behaviors
+  return { ok: true, data: { id: behavior.id, totalBehaviors: all.length } }
+}
+
+async function handleRemoveBehavior(args: Record<string, any>): Promise<ToolResult> {
+  const { project, removeBehavior } = useStore.getState()
+  const id = String(args.id)
+  if (!project.behaviors.find(b => b.id === id)) {
+    const ids = project.behaviors.map(b => b.id)
+    return { ok: false, error: `No behavior with id "${id}". Current ids: [${ids.join(', ') || '(none)'}].` }
+  }
+  removeBehavior(id)
+  return { ok: true, data: { removed: id } }
+}
+
+async function handleSaveProject(): Promise<ToolResult> {
+  if (!window.espAI?.saveProject) return { ok: false, error: 'save_project is only available in the Electron app.' }
+  const { project, savedPath, markSaved } = useStore.getState()
+  const path = await window.espAI.saveProject(project, project.name, savedPath ?? undefined)
+  if (!path) return { ok: false, error: 'Save was cancelled by the user.' }
+  markSaved(path)
+  return { ok: true, data: { savedTo: path } }
+}
+
+async function handleFetchUrl(args: Record<string, any>, ctx?: ExecContext): Promise<ToolResult> {
+  const url = args.url as string
+  try {
+    const timeout = AbortSignal.timeout(12000)
+    const signal = ctx?.signal
+      ? (AbortSignal as any).any?.([timeout, ctx.signal]) ?? timeout
+      : timeout
+    const resp = await fetch(url, { signal })
+    if (!resp.ok) return { ok: false, error: `HTTP ${resp.status} from ${url}` }
+    const ct = resp.headers.get('content-type') ?? ''
+    const raw = await resp.text()
+    const text = ct.includes('html')
+      ? raw.replace(/<style[\s\S]*?<\/style>/gi, '')
+           .replace(/<script[\s\S]*?<\/script>/gi, '')
+           .replace(/<[^>]+>/g, ' ')
+           .replace(/\s{2,}/g, ' ')
+           .trim()
+      : raw
+    return { ok: true, data: { url, content: text.slice(0, 4000) } }
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? String(e) }
+  }
+}
+
+async function handleListGlbModels(): Promise<ToolResult> {
+  const boards = catalog.listBoards().map(b => ({ type: 'board', id: b.id, name: b.name, glb: b.model, target: b.target }))
+  const components = catalog.listComponents().map(c => ({ type: 'component', id: c.id, name: c.name, glb: c.model, category: c.category }))
+  return { ok: true, data: { boards, components } }
+}
+
+const HANDLERS: Record<string, Handler> = {
+  get_project:      () => handleGetProject(),
+  list_catalog:     () => handleListCatalog(),
+  add_component:    (args) => handleAddComponent(args),
+  remove_component: (args) => handleRemoveComponent(args),
+  connect:          (args) => handleConnect(args),
+  run_drc:          () => handleRunDrc(),
+  read_firmware:    (args) => handleReadFirmware(args),
+  write_firmware:   (args) => handleWriteFirmware(args),
+  set_behavior:     (args) => handleSetBehavior(args),
+  remove_behavior:  (args) => handleRemoveBehavior(args),
+  save_project:     () => handleSaveProject(),
+  think:            () => Promise.resolve({ ok: true, data: { logged: true } }),
+  fetch_url:        (args, ctx) => handleFetchUrl(args, ctx),
+  list_glb_models:  () => handleListGlbModels(),
+}
+
 async function executeInternal(
   name: string,
   args: Record<string, any>,
   ctx?: ExecContext
 ): Promise<ToolResult> {
-  const s = useStore.getState()
+  const handler = HANDLERS[name]
+  if (!handler) return { ok: false, error: `unknown tool: ${name}` }
   try {
-    switch (name) {
-      case 'get_project': {
-        const drc = runDrc(s.project)
-        return {
-          ok: true,
-          data: {
-            board: s.project.board,
-            target: s.project.target,
-            components: s.project.components.map(c => ({
-              instance: c.instance, componentId: c.componentId
-            })),
-            nets: s.project.nets.map(n => ({ id: n.id, endpoints: n.endpoints })),
-            behaviors: s.project.behaviors.map(b => ({
-              id: b.id, trigger: b.trigger.type, actions: b.actions.length
-            })),
-            drc: { errors: drc.errors.length, warnings: drc.warnings.length,
-                   messages: [...drc.errors, ...drc.warnings].slice(0, 5) },
-            customFirmwareFiles: Object.keys(s.project.customCode ?? {}),
-          }
-        }
-      }
-
-      case 'list_catalog': {
-        return {
-          ok: true,
-          data: {
-            components: catalog.listComponents().map(c => ({
-              id: c.id, name: c.name, category: c.category,
-              pins: c.pins.map(p => p.id)
-            })),
-          }
-        }
-      }
-
-      case 'add_component': {
-        if (!catalog.getComponent(args.componentId)) {
-          const ids = catalog.listComponents().map(c => c.id)
-          const near = closestMatches(String(args.componentId ?? ''), ids, 5)
-          return {
-            ok: false,
-            error: `unknown componentId "${args.componentId}". Closest catalog ids: [${near.join(', ')}]. Call list_catalog for the full list.`
-          }
-        }
-        const before = s.project.components.length
-        s.addComponent(args.componentId)
-        const after = useStore.getState().project.components
-        const added = after[after.length - 1]
-        return { ok: true, data: { instance: added.instance, componentId: added.componentId, index: before } }
-      }
-
-      case 'remove_component': {
-        if (!s.project.components.find(c => c.instance === args.instance)) {
-          const instances = s.project.components.map(c => c.instance)
-          return {
-            ok: false,
-            error: `no such instance "${args.instance}". Current instances: [${instances.join(', ') || '(none)'}].`
-          }
-        }
-        s.removeComponent(args.instance)
-        return { ok: true, data: { removed: args.instance } }
-      }
-
-      case 'connect': {
-        const from = args.from as string, to = args.to as string
-        if (!resolvePin(s.project, from)) return { ok: false, error: `unresolved pin: "${from}". ${pinHint(s.project, from)}` }
-        if (!resolvePin(s.project, to))   return { ok: false, error: `unresolved pin: "${to}". ${pinHint(s.project, to)}` }
-        s.clickPin(from)
-        s.clickPin(to)
-        const after = useStore.getState().project
-        const drc = runDrc(after)
-        return {
-          ok: true,
-          data: {
-            netCount: after.nets.length,
-            drc: { errors: drc.errors, warnings: drc.warnings }
-          }
-        }
-      }
-
-      case 'run_drc': {
-        const drc = runDrc(s.project)
-        return { ok: true, data: {
-          errors: drc.errors.length, warnings: drc.warnings.length,
-          messages: [...drc.errors, ...drc.warnings]
-        }}
-      }
-
-      case 'read_firmware': {
-        const file = String(args.file ?? 'main/app_main.c')
-        const code = s.project.customCode?.[file]
-        if (code === undefined) return { ok: false, error: `No custom firmware found for "${file}". Use write_firmware to create it first.` }
-        return { ok: true, data: { file, code } }
-      }
-
-      case 'write_firmware': {
-        const file = String(args.file ?? 'main/app_main.c')
-        const code = String(args.code ?? '')
-        s.setCustomCode(file, code)
-        return { ok: true, data: { file, bytes: code.length } }
-      }
-
-      case 'set_behavior': {
-        const behavior: Behavior = {
-          id: String(args.id),
-          trigger: args.trigger as TriggerKind,
-          actions: (args.actions ?? []) as Action[],
-          ...(args.debounce_ms != null ? { debounce_ms: Number(args.debounce_ms) } : {})
-        }
-        s.setBehavior(behavior)
-        const all = useStore.getState().project.behaviors
-        return { ok: true, data: { id: behavior.id, totalBehaviors: all.length } }
-      }
-
-      case 'remove_behavior': {
-        const id = String(args.id)
-        if (!s.project.behaviors.find((b) => b.id === id)) {
-          const ids = s.project.behaviors.map((b) => b.id)
-          return { ok: false, error: `No behavior with id "${id}". Current ids: [${ids.join(', ') || '(none)'}].` }
-        }
-        s.removeBehavior(id)
-        return { ok: true, data: { removed: id } }
-      }
-
-      case 'save_project': {
-        if (!window.espAI?.saveProject) return { ok: false, error: 'save_project is only available in the Electron app.' }
-        const { project: p, savedPath: sp } = useStore.getState()
-        const path = await window.espAI.saveProject(p, p.name, sp ?? undefined)
-        if (!path) return { ok: false, error: 'Save was cancelled by the user.' }
-        useStore.getState().markSaved(path)
-        return { ok: true, data: { savedTo: path } }
-      }
-
-      case 'think': {
-        // Side-effect-free reasoning step — just acknowledge so the model continues.
-        return { ok: true, data: { logged: true } }
-      }
-
-      case 'fetch_url': {
-        const url = args.url as string
-        try {
-          const timeout = AbortSignal.timeout(12000)
-          const signal = ctx?.signal
-            ? (AbortSignal as any).any?.([timeout, ctx.signal]) ?? timeout
-            : timeout
-          const resp = await fetch(url, { signal })
-          if (!resp.ok) return { ok: false, error: `HTTP ${resp.status} from ${url}` }
-          const ct = resp.headers.get('content-type') ?? ''
-          const raw = await resp.text()
-          const text = ct.includes('html')
-            ? raw.replace(/<style[\s\S]*?<\/style>/gi, '')
-                 .replace(/<script[\s\S]*?<\/script>/gi, '')
-                 .replace(/<[^>]+>/g, ' ')
-                 .replace(/\s{2,}/g, ' ')
-                 .trim()
-            : raw
-          return { ok: true, data: { url, content: text.slice(0, 6000) } }
-        } catch (e: any) {
-          return { ok: false, error: e?.message ?? String(e) }
-        }
-      }
-
-      case 'list_glb_models': {
-        const boards = catalog.listBoards().map(b => ({
-          type: 'board', id: b.id, name: b.name, glb: b.model, target: b.target
-        }))
-        const components = catalog.listComponents().map(c => ({
-          type: 'component', id: c.id, name: c.name, glb: c.model, category: c.category
-        }))
-        return { ok: true, data: { boards, components } }
-      }
-
-      default:
-        return { ok: false, error: `unknown tool: ${name}` }
-    }
+    return await handler(args, ctx)
   } catch (e: any) {
     return { ok: false, error: e?.message ?? String(e) }
   }

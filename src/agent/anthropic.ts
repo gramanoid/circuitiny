@@ -89,7 +89,7 @@ export async function chatAnthropic(
         },
         body: JSON.stringify({
           model: cfg.model,
-          max_tokens: 8192,
+          max_tokens: 2048,
           system: system || undefined,
           messages,
           tools: anthropicTools,
