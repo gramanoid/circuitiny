@@ -58,12 +58,40 @@ function targetBoardPin(
   return null
 }
 
+// Generate a simulated analog sensor value (0–4095, 12-bit ADC) that slowly
+// oscillates over time. Shape is tuned per sensor category inferred from the
+// component id: soil/moisture sensors read high when dry and low when wet.
+function simSensorValue(componentId: string, simTimeMs: number): number {
+  const id = componentId.toLowerCase()
+  const t = simTimeMs / 1000  // seconds
+
+  if (id.includes('soil') || id.includes('moisture')) {
+    // Oscillates between ~1800 (wet) and ~3600 (dry) on a ~30 s period.
+    const mid = 2700, amp = 900
+    return Math.round(mid + amp * Math.sin((2 * Math.PI * t) / 30))
+  }
+  if (id.includes('temp') || id.includes('dht')) {
+    // Temperature-like: 20–35 °C mapped to 0–4095 on a slow cycle.
+    const mid = 2048, amp = 1000
+    return Math.round(mid + amp * Math.sin((2 * Math.PI * t) / 60))
+  }
+  if (id.includes('light') || id.includes('ldr') || id.includes('photo')) {
+    // Light level: bright (4095) during the day half, dim (200) during dark half.
+    const mid = 2048, amp = 1848
+    return Math.round(mid + amp * Math.sin((2 * Math.PI * t) / 20))
+  }
+  // Generic sensor: mid-range oscillation.
+  const mid = 2048, amp = 512
+  return Math.round(mid + amp * Math.sin((2 * Math.PI * t) / 10))
+}
+
 function runActions(
   project: Project,
   actions: Action[],
   gpios: Record<string, boolean>,
   logs: string[],
-  behId: string
+  behId: string,
+  simTimeMs: number
 ) {
   for (const a of actions) {
     switch (a.type) {
@@ -81,13 +109,21 @@ function runActions(
         logs.push(`[${behId}] ${a.level}: ${a.message}`)
         break
       case 'delay':
-        // Ignored in v0 simulator — delays don't block the event loop here.
+        // Ignored in simulator — delays don't block the event loop here.
         break
+      case 'read_sensor': {
+        const instanceId = a.target.split('.')[0]
+        const comp = project.components.find((c) => c.instance === instanceId)
+        const componentId = comp?.componentId ?? instanceId
+        const value = simSensorValue(componentId, simTimeMs)
+        logs.push(`[${behId}] info: ${a.into} = ${value}`)
+        break
+      }
       case 'sequence':
-        runActions(project, a.actions, gpios, logs, behId)
+        runActions(project, a.actions, gpios, logs, behId, simTimeMs)
         break
       default:
-        // mqtt / http / read_sensor / if / call_user_fn not simulated in v0
+        // mqtt / http / if / call_user_fn not simulated
         break
     }
   }
@@ -114,7 +150,7 @@ export function stepBehaviors(
 
   for (const beh of project.behaviors) {
     if (firesInWindow(beh, prevTime, newTime, project, externalEdges)) {
-      runActions(project, beh.actions, gpios, logs, beh.id)
+      runActions(project, beh.actions, gpios, logs, beh.id, newTime)
     }
   }
   return { gpios, logs }
