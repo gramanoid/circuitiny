@@ -5,8 +5,11 @@
 import type { Project, Behavior, Action } from '../project/schema'
 import { catalog } from '../catalog'
 
+export const STRIP_LED_N = 8
+
 export interface SimStep {
   gpios: Record<string, boolean>
+  strips: Record<string, Array<[number, number, number]>>
   logs: string[]
 }
 
@@ -89,6 +92,7 @@ function runActions(
   project: Project,
   actions: Action[],
   gpios: Record<string, boolean>,
+  strips: Record<string, Array<[number, number, number]>>,
   logs: string[],
   behId: string,
   simTimeMs: number
@@ -119,8 +123,17 @@ function runActions(
         logs.push(`[${behId}] info: ${a.into} = ${value}`)
         break
       }
+      case 'set_pixel': {
+        const arr = [...(strips[a.target] ?? Array(STRIP_LED_N).fill([0, 0, 0] as [number, number, number]))]
+        arr[a.index] = [Math.max(0, Math.min(255, a.r)), Math.max(0, Math.min(255, a.g)), Math.max(0, Math.min(255, a.b))]
+        strips[a.target] = arr
+        break
+      }
+      case 'set_strip':
+        strips[a.target] = a.pixels.map(([r, g, b]) => [Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b))] as [number, number, number])
+        break
       case 'sequence':
-        runActions(project, a.actions, gpios, logs, behId, simTimeMs)
+        runActions(project, a.actions, gpios, strips, logs, behId, simTimeMs)
         break
       default:
         // mqtt / http / if / call_user_fn not simulated
@@ -134,26 +147,29 @@ export interface GpioEdge {
   type: 'rising' | 'falling'
 }
 
-// Advance the simulation by dtMs starting from (prevTime, prevGpios).
+// Advance the simulation by dtMs starting from (prevTime, prevGpios, prevStrips).
 // "boot" triggers fire when prevTime === 0.
 // externalEdges: typed edge events this tick (from UI button press/release).
 export function stepBehaviors(
   project: Project,
   prevTime: number,
   prevGpios: Record<string, boolean>,
+  prevStrips: Record<string, Array<[number, number, number]>>,
   dtMs: number,
   externalEdges: GpioEdge[] = []
 ): SimStep {
   const gpios = { ...prevGpios }
+  const strips: Record<string, Array<[number, number, number]>> = {}
+  for (const k in prevStrips) strips[k] = prevStrips[k].slice()
   const logs: string[] = []
   const newTime = prevTime + dtMs
 
   for (const beh of project.behaviors) {
     if (firesInWindow(beh, prevTime, newTime, project, externalEdges)) {
-      runActions(project, beh.actions, gpios, logs, beh.id, newTime)
+      runActions(project, beh.actions, gpios, strips, logs, beh.id, newTime)
     }
   }
-  return { gpios, logs }
+  return { gpios, strips, logs }
 }
 
 function firesInWindow(

@@ -15,13 +15,15 @@ function loadCfg() {
 function saveCfg(o: object) { localStorage.setItem(LS_KEY, JSON.stringify(o)) }
 
 const FALLBACK_MODELS: Record<ProviderType, string[]> = {
-  ollama:     [],
-  openai:     ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
-  anthropic:  ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'],
-  openrouter: ['anthropic/claude-sonnet-4-6', 'openai/gpt-4o', 'meta-llama/llama-3.3-70b-instruct', 'google/gemini-2.5-flash'],
+  ollama:      [],
+  openai:      ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
+  anthropic:   ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'],
+  openrouter:  ['anthropic/claude-sonnet-4-6', 'openai/gpt-4o', 'meta-llama/llama-3.3-70b-instruct', 'google/gemini-2.5-flash'],
+  claudecode:  ['sonnet', 'opus', 'haiku'],
 }
 
 async function fetchModels(provider: ProviderType, apiKey: string, baseUrl: string): Promise<string[]> {
+  if (provider === 'claudecode') return FALLBACK_MODELS.claudecode
   try {
     const sig = AbortSignal.timeout(5000)
     if (provider === 'ollama') {

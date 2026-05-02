@@ -23,17 +23,18 @@ export function useSimLoop() {
     const proj = useStore.getState().project
     const preflight = runDrc(proj).warnings.map((w) => `⚠ [preflight] ${w.message}`)
     const seed = initialGpios(proj)
-    const first = stepBehaviors(proj, 0, seed, 0)
+    const first = stepBehaviors(proj, 0, seed, {}, 0)
     useStore.setState((s) => ({
       simGpios: first.gpios,
+      simStrips: first.strips,
       simLog: [...s.simLog, ...preflight, ...first.logs].slice(-200),
     }))
     const id = window.setInterval(() => {
       const s = useStore.getState()
       if (!s.simulating) return
       const dt = SIM_TICK_MS * s.simSpeed
-      const step = stepBehaviors(s.project, s.simTime, s.simGpios, dt, s.pendingEdges as import('./evaluate').GpioEdge[])
-      s.simStep(dt, step.gpios, step.logs)
+      const step = stepBehaviors(s.project, s.simTime, s.simGpios, s.simStrips, dt, s.pendingEdges as import('./evaluate').GpioEdge[])
+      s.simStep(dt, step.gpios, step.strips, step.logs)
     }, SIM_TICK_MS)
     return () => window.clearInterval(id)
     // Intentional: only re-seed when simulating flips; live project edits are

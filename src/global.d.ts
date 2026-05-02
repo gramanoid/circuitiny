@@ -17,6 +17,7 @@ declare global {
       idfStop: (runId: string) => Promise<{ ok: boolean; reason?: string }>
       onIdfLog: (cb: (e: IdfLogEvent) => void) => () => void
       onIdfExit: (cb: (e: IdfExitEvent) => void) => () => void
+      claudeCodeChat: (opts: { prompt: string; systemAppend: string; model: string }) => Promise<{ ok: boolean; text?: string; error?: string }>
     }
   }
 }

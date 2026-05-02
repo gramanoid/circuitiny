@@ -179,13 +179,18 @@ export const tools: ToolDef[] = [
             items: {
               type: 'object',
               properties: {
-                type: { type: 'string', enum: ['set_output', 'toggle', 'log', 'delay', 'sequence'] },
-                target: { type: 'string', description: 'Pin ref, e.g. "led1.anode".' },
+                type: { type: 'string', enum: ['set_output', 'toggle', 'log', 'delay', 'sequence', 'set_pixel', 'set_strip'] },
+                target: { type: 'string', description: 'Pin ref for set_output/toggle (e.g. "led1.anode"), or instance name for set_pixel/set_strip (e.g. "strip1").' },
                 value: { type: 'string', enum: ['on', 'off'] },
                 level: { type: 'string', enum: ['info', 'warn', 'error'] },
                 message: { type: 'string' },
                 ms: { type: 'number' },
-                actions: { type: 'array', items: { type: 'object' } }
+                actions: { type: 'array', items: { type: 'object' } },
+                index: { type: 'number', description: 'LED index (0-based) for set_pixel.' },
+                r: { type: 'number', description: 'Red channel 0-255 for set_pixel.' },
+                g: { type: 'number', description: 'Green channel 0-255 for set_pixel.' },
+                b: { type: 'number', description: 'Blue channel 0-255 for set_pixel.' },
+                pixels: { type: 'array', items: { type: 'array', items: { type: 'number' } }, description: 'Array of [r,g,b] tuples for set_strip, one per LED.' }
               },
               required: ['type']
             }
@@ -193,6 +198,57 @@ export const tools: ToolDef[] = [
           debounce_ms: { type: 'number' }
         },
         required: ['id', 'trigger', 'actions']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'blink',
+      description: 'Make a pin toggle on a timer. Shorthand — use instead of set_behavior when you just need a blinking LED or periodic toggle.',
+      parameters: {
+        type: 'object',
+        properties: {
+          pin:       { type: 'string', description: 'Pin ref to toggle, e.g. "led1.anode".' },
+          period_ms: { type: 'number', description: 'Toggle interval in milliseconds, e.g. 500.' },
+          id:        { type: 'string', description: 'Behavior id (default: "blink").' }
+        },
+        required: ['pin', 'period_ms']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'set_on_boot',
+      description: 'Set a pin on or off when the device boots. Shorthand — use instead of set_behavior for simple boot-time pin initialisation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          pin:   { type: 'string', description: 'Pin ref, e.g. "led1.anode".' },
+          value: { type: 'string', enum: ['on', 'off'], description: '"on" or "off".' },
+          id:    { type: 'string', description: 'Behavior id (default: "on_boot").' }
+        },
+        required: ['pin', 'value']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'on_button_press',
+      description: 'Control a pin when a button is pressed. Shorthand — use instead of set_behavior for simple button→LED interactions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          button_pin:  { type: 'string', description: 'Button pin ref to watch, e.g. "btn1.a".' },
+          action_pin:  { type: 'string', description: 'Pin ref to control, e.g. "led1.anode".' },
+          action:      { type: 'string', enum: ['toggle', 'on', 'off'], description: '"toggle", "on", or "off".' },
+          edge:        { type: 'string', enum: ['falling', 'rising', 'both'], description: 'Edge to trigger on (default: "falling").' },
+          debounce_ms: { type: 'number', description: 'Debounce in ms (default: 50).' },
+          id:          { type: 'string', description: 'Behavior id (default: "button_press").' }
+        },
+        required: ['button_pin', 'action_pin', 'action']
       }
     }
   },
@@ -224,6 +280,26 @@ export const tools: ToolDef[] = [
       name: 'list_glb_models',
       description: 'List all 3D GLB models registered in the system — both built-in boards and catalog components. Use to know which physical models are available.',
       parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'plan_circuit',
+      description: 'Pre-flight check before building a circuit. Validates component IDs against the catalog, warns about missing companion parts (resistor for LED, pull-ups for I2C), and returns a curated list of safe GPIO pins for the current board. Call this before the first add_component.',
+      parameters: {
+        type: 'object',
+        properties: {
+          goal: { type: 'string', description: 'One-sentence description of what the circuit should do.' },
+          components: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Catalog component IDs you plan to use, e.g. ["led-5mm-red", "resistor-220r"].'
+          },
+          use_wifi: { type: 'boolean', description: 'True if the design uses Wi-Fi — excludes ADC2 pins from the safe GPIO list.' }
+        },
+        required: ['goal', 'components']
+      }
     }
   }
 ]
@@ -323,18 +399,30 @@ async function handleRemoveNet(args: Record<string, any>): Promise<ToolResult> {
 async function handleConnect(args: Record<string, any>): Promise<ToolResult> {
   const s = useStore.getState()
   const from = args.from as string, to = args.to as string
+  if (from === to) return { ok: false, error: `Cannot connect a pin to itself: "${from}". Provide two different pin refs.` }
   if (!resolvePin(s.project, from)) return { ok: false, error: `unresolved pin: "${from}". ${pinHint(s.project, from)}` }
   if (!resolvePin(s.project, to))   return { ok: false, error: `unresolved pin: "${to}". ${pinHint(s.project, to)}` }
+  const alreadyConnected = s.project.nets.find(n => n.endpoints.includes(from) && n.endpoints.includes(to))
+  if (alreadyConnected) {
+    return { ok: false, error: `"${from}" and "${to}" are already on the same net ("${alreadyConnected.id}"). No change needed.` }
+  }
   s.clickPin(from)
   s.clickPin(to)
   const after = useStore.getState().project
   const drc = runDrc(after)
+  const newErrors = drc.errors.filter(e => e.involves.includes(from) || e.involves.includes(to))
   return {
     ok: true,
     data: {
       netCount: after.nets.length,
-      drc: { errors: drc.errors.length, warnings: drc.warnings.length,
-             messages: [...drc.errors, ...drc.warnings].slice(0, 5) }
+      drc: {
+        errors: drc.errors.length,
+        warnings: drc.warnings.length,
+        messages: [...drc.errors, ...drc.warnings].slice(0, 5),
+        ...(newErrors.length > 0 ? {
+          newErrorsFromThisConnect: newErrors.map(e => ({ rule: e.id, message: e.message, fix: e.fixHint }))
+        } : {})
+      }
     }
   }
 }
@@ -362,16 +450,113 @@ async function handleWriteFirmware(args: Record<string, any>): Promise<ToolResul
   return { ok: true, data: { file, bytes: code.length } }
 }
 
+const VALID_TRIGGERS = ['boot', 'timer', 'gpio_edge', 'wifi_connected'] as const
+const VALID_ACTIONS  = ['set_output', 'toggle', 'log', 'delay', 'sequence'] as const
+
 async function handleSetBehavior(args: Record<string, any>): Promise<ToolResult> {
+  const triggerType = args.trigger?.type
+  if (!VALID_TRIGGERS.includes(triggerType)) {
+    const near = closestMatches(String(triggerType ?? ''), [...VALID_TRIGGERS], 3)
+    return { ok: false, error: `Invalid trigger type "${triggerType}". Valid types: [${VALID_TRIGGERS.join(', ')}]. Closest matches: [${near.join(', ')}].` }
+  }
+  if (triggerType === 'timer' && args.trigger.period_ms == null) {
+    return { ok: false, error: 'timer trigger requires "period_ms" (number, ms). Example: { type: "timer", period_ms: 1000 }' }
+  }
+  if (triggerType === 'gpio_edge' && !args.trigger.source) {
+    return { ok: false, error: 'gpio_edge trigger requires "source" (pin ref). Example: { type: "gpio_edge", source: "btn1.a", edge: "falling" }' }
+  }
+
+  const { project } = useStore.getState()
+  const actions: any[] = args.actions ?? []
+  for (let i = 0; i < actions.length; i++) {
+    const a = actions[i]
+    if (!VALID_ACTIONS.includes(a.type)) {
+      const near = closestMatches(String(a.type ?? ''), [...VALID_ACTIONS], 3)
+      return { ok: false, error: `actions[${i}]: invalid type "${a.type}". Valid types: [${VALID_ACTIONS.join(', ')}]. Closest: [${near.join(', ')}].` }
+    }
+    if (a.type === 'set_output') {
+      if (!a.target) return { ok: false, error: `actions[${i}] set_output requires "target" (pin ref, e.g. "led1.anode").` }
+      if (!['on', 'off'].includes(a.value)) return { ok: false, error: `actions[${i}] set_output requires "value": "on" or "off".` }
+      if (!resolvePin(project, a.target)) return { ok: false, error: `actions[${i}] target "${a.target}" not found. ${pinHint(project, a.target)}` }
+    }
+    if (a.type === 'toggle') {
+      if (!a.target) return { ok: false, error: `actions[${i}] toggle requires "target" (pin ref, e.g. "led1.anode").` }
+      if (!resolvePin(project, a.target)) return { ok: false, error: `actions[${i}] target "${a.target}" not found. ${pinHint(project, a.target)}` }
+    }
+    if (a.type === 'delay' && a.ms == null) {
+      return { ok: false, error: `actions[${i}] delay requires "ms" (number, milliseconds). Example: { type: "delay", ms: 500 }` }
+    }
+    if (a.type === 'log' && !a.message) {
+      return { ok: false, error: `actions[${i}] log requires "message" (string). Example: { type: "log", level: "info", message: "hello" }` }
+    }
+  }
+
   const behavior: Behavior = {
     id: String(args.id),
     trigger: args.trigger as TriggerKind,
-    actions: (args.actions ?? []) as Action[],
+    actions: actions as Action[],
     ...(args.debounce_ms != null ? { debounce_ms: Number(args.debounce_ms) } : {})
   }
   useStore.getState().setBehavior(behavior)
   const all = useStore.getState().project.behaviors
   return { ok: true, data: { id: behavior.id, totalBehaviors: all.length } }
+}
+
+async function handleBlink(args: Record<string, any>): Promise<ToolResult> {
+  const { project } = useStore.getState()
+  const pin = String(args.pin ?? '')
+  const periodMs = Number(args.period_ms)
+  if (!pin) return { ok: false, error: 'blink requires "pin" (pin ref, e.g. "led1.anode").' }
+  if (!Number.isFinite(periodMs) || periodMs <= 0) return { ok: false, error: 'blink requires "period_ms" > 0.' }
+  if (!resolvePin(project, pin)) return { ok: false, error: `pin "${pin}" not found. ${pinHint(project, pin)}` }
+  const id = String(args.id ?? 'blink')
+  useStore.getState().setBehavior({
+    id,
+    trigger: { type: 'timer', period_ms: periodMs },
+    actions: [{ type: 'toggle', target: pin }],
+  })
+  return { ok: true, data: { id, pin, period_ms: periodMs } }
+}
+
+async function handleSetOnBoot(args: Record<string, any>): Promise<ToolResult> {
+  const { project } = useStore.getState()
+  const pin = String(args.pin ?? '')
+  const value = String(args.value ?? '')
+  if (!pin) return { ok: false, error: 'set_on_boot requires "pin" (pin ref, e.g. "led1.anode").' }
+  if (!['on', 'off'].includes(value)) return { ok: false, error: 'set_on_boot requires "value": "on" or "off".' }
+  if (!resolvePin(project, pin)) return { ok: false, error: `pin "${pin}" not found. ${pinHint(project, pin)}` }
+  const id = String(args.id ?? 'on_boot')
+  useStore.getState().setBehavior({
+    id,
+    trigger: { type: 'boot' },
+    actions: [{ type: 'set_output', target: pin, value: value as 'on' | 'off' }],
+  })
+  return { ok: true, data: { id, pin, value } }
+}
+
+async function handleOnButtonPress(args: Record<string, any>): Promise<ToolResult> {
+  const { project } = useStore.getState()
+  const buttonPin = String(args.button_pin ?? '')
+  const actionPin = String(args.action_pin ?? '')
+  const action    = String(args.action ?? '')
+  const edge      = String(args.edge ?? 'falling')
+  if (!buttonPin) return { ok: false, error: 'on_button_press requires "button_pin".' }
+  if (!actionPin) return { ok: false, error: 'on_button_press requires "action_pin".' }
+  if (!['toggle', 'on', 'off'].includes(action)) return { ok: false, error: 'on_button_press "action" must be "toggle", "on", or "off".' }
+  if (!['falling', 'rising', 'both'].includes(edge)) return { ok: false, error: 'on_button_press "edge" must be "falling", "rising", or "both".' }
+  if (!resolvePin(project, buttonPin)) return { ok: false, error: `button_pin "${buttonPin}" not found. ${pinHint(project, buttonPin)}` }
+  if (!resolvePin(project, actionPin)) return { ok: false, error: `action_pin "${actionPin}" not found. ${pinHint(project, actionPin)}` }
+  const id = String(args.id ?? 'button_press')
+  const act = action === 'toggle'
+    ? { type: 'toggle' as const, target: actionPin }
+    : { type: 'set_output' as const, target: actionPin, value: action as 'on' | 'off' }
+  useStore.getState().setBehavior({
+    id,
+    trigger: { type: 'gpio_edge', source: buttonPin, edge: edge as 'falling' | 'rising' | 'both' },
+    actions: [act],
+    ...(args.debounce_ms != null ? { debounce_ms: Number(args.debounce_ms) } : { debounce_ms: 50 }),
+  })
+  return { ok: true, data: { id, button_pin: buttonPin, action_pin: actionPin, action, edge } }
 }
 
 async function handleRemoveBehavior(args: Record<string, any>): Promise<ToolResult> {
@@ -418,6 +603,94 @@ async function handleFetchUrl(args: Record<string, any>, ctx?: ExecContext): Pro
   }
 }
 
+async function handlePlanCircuit(args: Record<string, any>): Promise<ToolResult> {
+  const { project } = useStore.getState()
+  const board = catalog.getBoard(project.board)
+  if (!board) return { ok: false, error: 'No board loaded in project. Cannot plan.' }
+
+  const requestedIds: string[] = Array.isArray(args.components) ? args.components : []
+  const useWifi: boolean = !!args.use_wifi
+
+  const validComponents: string[] = []
+  const unknownComponents: { id: string; suggestions: string[] }[] = []
+  const warnings: string[] = []
+  const checklist: string[] = []
+
+  const allCatalogIds = catalog.listComponents().map(c => c.id)
+  for (const id of requestedIds) {
+    if (catalog.getComponent(id)) {
+      validComponents.push(id)
+      checklist.push(`✓ "${id}" found in catalog`)
+    } else {
+      const suggestions = closestMatches(id, allCatalogIds, 3)
+      unknownComponents.push({ id, suggestions })
+      checklist.push(`✗ "${id}" not in catalog — closest: [${suggestions.join(', ')}]. Call list_catalog for all IDs.`)
+    }
+  }
+
+  // Companion checks
+  const hasLed = validComponents.some(id => catalog.getComponent(id)?.pins.some(p => p.id === 'anode'))
+  const hasResistor = validComponents.some(id => id.startsWith('resistor-'))
+  if (hasLed && !hasResistor) {
+    warnings.push('LED planned without a series resistor — add "resistor-220r" to protect the LED and GPIO')
+    checklist.push('⚠ Add resistor-220r for the LED before wiring')
+  }
+
+  const hasI2cComp = validComponents.some(id =>
+    catalog.getComponent(id)?.pins.some(p => p.type === 'i2c_sda' || p.type === 'i2c_scl')
+  )
+  const hasPullup4k = validComponents.some(id => /resistor-4k/i.test(id))
+  if (hasI2cComp && !hasPullup4k) {
+    warnings.push('I2C component planned without 4.7 kΩ pull-ups — add resistor-4k7 ×2 for SDA and SCL')
+    checklist.push('⚠ Add resistor-4k7 (×2) for I2C pull-ups on SDA and SCL')
+  }
+
+  // Build safe GPIO list: exclude flash, strapping, input-only, USB, already-used, and ADC2 when Wi-Fi is on
+  const usedBoardPins = new Set(
+    project.nets.flatMap(n => n.endpoints)
+      .filter(e => e.startsWith('board.'))
+      .map(e => e.split('.')[1])
+  )
+  const restrictedGpios = new Set([
+    ...board.flashPins,
+    ...board.strappingPins,
+    ...board.inputOnlyPins,
+    ...(board.usbPins ?? []),
+    ...(useWifi ? (board.adc2Pins ?? []) : []),
+  ])
+  const safeGpios = board.pins
+    .filter(p => {
+      if (['ground', 'power_in', 'power_out', 'nc'].includes(p.type)) return false
+      if (usedBoardPins.has(p.id)) return false
+      const gpioLabel = 'GPIO' + p.label
+      if (restrictedGpios.has(gpioLabel)) return false
+      return true
+    })
+    .map(p => ({ pinId: p.id, gpio: `GPIO${p.label}`, type: p.type }))
+
+  if (safeGpios.length === 0) {
+    warnings.push('No safe GPIO pins available on this board — all suitable pins are in use or restricted')
+  }
+
+  const hasErrors = unknownComponents.length > 0
+  return {
+    ok: true,
+    data: {
+      goal: args.goal ?? '(not specified)',
+      validComponents,
+      unknownComponents,
+      warnings,
+      safeGpios,
+      checklist,
+      nextStep: hasErrors
+        ? 'Fix unknown component IDs before proceeding. Use the suggestions above or call list_catalog.'
+        : warnings.length > 0
+          ? 'Address the warnings above (add missing companion parts), then proceed with add_component.'
+          : 'Plan validated. Proceed with add_component for each item in validComponents, using safeGpios for pin assignments.'
+    }
+  }
+}
+
 async function handleListGlbModels(): Promise<ToolResult> {
   const boards = catalog.listBoards().map(b => ({ type: 'board', id: b.id, name: b.name, glb: b.model, target: b.target }))
   const components = catalog.listComponents().map(c => ({ type: 'component', id: c.id, name: c.name, glb: c.model, category: c.category }))
@@ -435,11 +708,15 @@ const HANDLERS: Record<string, Handler> = {
   read_firmware:    (args) => handleReadFirmware(args),
   write_firmware:   (args) => handleWriteFirmware(args),
   set_behavior:     (args) => handleSetBehavior(args),
+  blink:            (args) => handleBlink(args),
+  set_on_boot:      (args) => handleSetOnBoot(args),
+  on_button_press:  (args) => handleOnButtonPress(args),
   remove_behavior:  (args) => handleRemoveBehavior(args),
   save_project:     () => handleSaveProject(),
   think:            () => Promise.resolve({ ok: true, data: { logged: true } }),
   fetch_url:        (args, ctx) => handleFetchUrl(args, ctx),
   list_glb_models:  () => handleListGlbModels(),
+  plan_circuit:     (args) => handlePlanCircuit(args),
 }
 
 async function executeInternal(

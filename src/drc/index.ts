@@ -67,12 +67,18 @@ function ruleInputOnlyOutput(project: Project): Violation[] {
     const boardPinLabel = board.pins.find((p) => p.id === bp)?.label
     const isInputOnly = boardPinLabel && board.inputOnlyPins.includes('GPIO' + boardPinLabel)
     if (drives && isInputOnly) {
+      const safePin = suggestSafePin(project, net.id)
       out.push({
         id: 'gpio.input_only',
         severity: 'error',
         message: `GPIO${boardPinLabel} is input-only on ${board.name} but is driven as output`,
         involves: net.endpoints,
-        fixHint: { action: 'reassign_pin', from: bp }
+        fixHint: {
+          action: 'reassign_pin',
+          suggestion: safePin
+            ? `call remove_net("${net.id}") then connect to "board.${safePin}" instead`
+            : 'call remove_net for this net then reconnect to a non-input-only GPIO'
+        }
       })
     }
   }
@@ -88,11 +94,18 @@ function ruleFlashPinUsed(project: Project): Violation[] {
     if (!bp) continue
     const label = board.pins.find((p) => p.id === bp)?.label
     if (label && board.flashPins.includes('GPIO' + label)) {
+      const safePin = suggestSafePin(project, net.id)
       out.push({
         id: 'gpio.flash_pin',
         severity: 'error',
         message: `GPIO${label} is reserved for SPI flash — using it externally will brick the board`,
-        involves: net.endpoints
+        involves: net.endpoints,
+        fixHint: {
+          action: 'reassign_pin',
+          suggestion: safePin
+            ? `call remove_net("${net.id}") then connect to "board.${safePin}" instead`
+            : 'call remove_net for this net and use a GPIO that is not in the GPIO6-GPIO11 range'
+        }
       })
     }
   }
@@ -111,7 +124,11 @@ function ruleVoltageMismatch(project: Project): Violation[] {
         id: 'electrical.voltage_mismatch',
         severity: 'error',
         message: 'VIN (5V) connected to a 3.3V-only signal pin',
-        involves: net.endpoints
+        involves: net.endpoints,
+        fixHint: {
+          action: 'remove_net',
+          suggestion: `call remove_net("${net.id}"). Never connect VIN directly to a GPIO — ESP32 GPIOs are 3.3V-only and will be damaged. Use "board.3v3" for power instead.`
+        }
       })
     }
   }
@@ -129,7 +146,11 @@ function rulePowerToGroundShort(project: Project): Violation[] {
         id: 'electrical.short',
         severity: 'error',
         message: 'Net shorts power directly to ground',
-        involves: net.endpoints
+        involves: net.endpoints,
+        fixHint: {
+          action: 'remove_net',
+          suggestion: `call remove_net("${net.id}") immediately — shorting power to ground will damage the board.`
+        }
       })
     }
   }
@@ -143,8 +164,12 @@ function ruleNetSize(project: Project): Violation[] {
       out.push({
         id: 'wiring.dangling',
         severity: 'warning',
-        message: `Net ${net.id} has only one endpoint`,
-        involves: net.endpoints
+        message: `Net ${net.id} has only one endpoint (${net.endpoints[0] ?? '?'})`,
+        involves: net.endpoints,
+        fixHint: {
+          action: 'connect_or_remove',
+          suggestion: `Either call connect("${net.endpoints[0]}", "<other-pin>") to complete the wire, or call remove_net("${net.id}") to clean it up.`
+        }
       })
     }
   }
@@ -185,11 +210,18 @@ function ruleStrappingPin(project: Project): Violation[] {
     if (!bp) continue
     const label = board.pins.find((p) => p.id === bp)?.label
     if (label && board.strappingPins.includes('GPIO' + label)) {
+      const safePin = suggestSafePin(project, net.id)
       out.push({
         id: 'gpio.strapping',
         severity: 'warning',
         message: `GPIO${label} is a boot strapping pin — driving it at boot can prevent the chip from starting`,
-        involves: net.endpoints
+        involves: net.endpoints,
+        fixHint: {
+          action: 'reassign_pin',
+          suggestion: safePin
+            ? `call remove_net("${net.id}") then connect to "board.${safePin}" to avoid boot issues`
+            : 'call remove_net for this net and reconnect to a non-strapping GPIO'
+        }
       })
     }
   }

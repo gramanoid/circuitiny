@@ -9,6 +9,7 @@ import { resolveSchematicSymbol } from '../project/component'
 import { catalog, pinColor } from '../catalog'
 import { resolvePin, netColor } from '../project/pins'
 import { runDrc, suggestSafePin, type Violation } from '../drc'
+import { STRIP_LED_N } from '../sim/evaluate'
 
 function PinAnchor({ pin, owner, position, color, glow, onClick }: {
   pin: PinDef
@@ -158,24 +159,42 @@ function LoadedGlb({ url, scale = 1, lit, simActive }: {
   )
 }
 
-// Animated WS2812B strip — each LED runs a rainbow at a different phase.
+// Animated WS2812B strip — per-pixel RGB when pixels prop is set, rainbow animation otherwise.
 // Extracted as its own component so useFrame works correctly.
-const LED_N = 8
 const LED_SPACING = 0.006
-const LED_START_X = -((LED_N - 1) * LED_SPACING) / 2
+const LED_START_X = -((STRIP_LED_N - 1) * LED_SPACING) / 2
 
-function LedStripBody({ lit, onClick }: { lit?: boolean; onClick: (e: ThreeEvent<MouseEvent>) => void }) {
-  const meshRefs = useRef<(THREE.Mesh | null)[]>(Array(LED_N).fill(null))
-  const lightRefs = useRef<(THREE.PointLight | null)[]>(Array(LED_N).fill(null))
+function LedStripBody({ lit, pixels, onClick }: {
+  lit?: boolean
+  pixels?: Array<[number, number, number]>
+  onClick: (e: ThreeEvent<MouseEvent>) => void
+}) {
+  const meshRefs = useRef<(THREE.Mesh | null)[]>(Array(STRIP_LED_N).fill(null))
+  const lightRefs = useRef<(THREE.PointLight | null)[]>(Array(STRIP_LED_N).fill(null))
   const t = useRef(0)
 
   useFrame((_, delta) => {
+    if (pixels) {
+      meshRefs.current.forEach((mesh, i) => {
+        if (!mesh) return
+        const mat = mesh.material as THREE.MeshStandardMaterial
+        const px = pixels[i] ?? [0, 0, 0]
+        const on = px[0] > 0 || px[1] > 0 || px[2] > 0
+        const col = new THREE.Color(px[0] / 255, px[1] / 255, px[2] / 255)
+        mat.color.copy(col)
+        mat.emissive.copy(col)
+        mat.emissiveIntensity = on ? 3.5 : 0
+        const light = lightRefs.current[i]
+        if (light) { light.color.copy(col); light.intensity = on ? 0.008 : 0 }
+      })
+      return
+    }
     if (!lit) return
     t.current += delta * 0.8
     meshRefs.current.forEach((mesh, i) => {
       if (!mesh) return
       const mat = mesh.material as THREE.MeshStandardMaterial
-      const hue = (t.current + i / LED_N) % 1
+      const hue = (t.current + i / STRIP_LED_N) % 1
       const col = new THREE.Color().setHSL(hue, 1, 0.5)
       mat.color.copy(col)
       mat.emissive.copy(col)
@@ -188,35 +207,36 @@ function LedStripBody({ lit, onClick }: { lit?: boolean; onClick: (e: ThreeEvent
   return (
     <group onClick={onClick}>
       <mesh position={[0, -0.0005, 0]}>
-        <boxGeometry args={[LED_N * LED_SPACING + 0.004, 0.001, 0.009]} />
+        <boxGeometry args={[STRIP_LED_N * LED_SPACING + 0.004, 0.001, 0.009]} />
         <meshStandardMaterial color="#1a3a1a" roughness={0.7} />
       </mesh>
-      {Array.from({ length: LED_N }, (_, i) => (
+      {Array.from({ length: STRIP_LED_N }, (_, i) => (
         <group key={i} position={[LED_START_X + i * LED_SPACING, 0.001, 0]}>
           <mesh ref={(el) => { meshRefs.current[i] = el }}>
             <boxGeometry args={[0.004, 0.002, 0.004]} />
-            <meshStandardMaterial color={lit ? '#ff2200' : '#111'} emissive={lit ? '#ff0000' : '#000'} emissiveIntensity={lit ? 3.5 : 0} />
+            <meshStandardMaterial color="#111" emissive="#000" emissiveIntensity={0} />
           </mesh>
           <pointLight ref={(el) => { lightRefs.current[i] = el }}
-            position={[0, 0.003, 0]} intensity={lit ? 0.008 : 0} distance={0.03} color="#ff2200" />
+            position={[0, 0.003, 0]} intensity={0} distance={0.03} color="#ff2200" />
         </group>
       ))}
     </group>
   )
 }
 
-function DefaultBody({ componentId, schematicSymbol, onClick, selected, lit, isButton, simActive }: {
+function DefaultBody({ componentId, schematicSymbol, onClick, selected, lit, pixels, isButton, simActive }: {
   componentId: string
   schematicSymbol?: string
   onClick: (e: ThreeEvent<MouseEvent>) => void
   selected: boolean
   lit?: boolean
+  pixels?: Array<[number, number, number]>
   isButton?: boolean
   simActive?: boolean
 }) {
-  // WS2812B LED strip: animated rainbow, each LED at a different phase.
+  // WS2812B LED strip: per-pixel RGB when pixels is set, rainbow animation otherwise.
   if (schematicSymbol === 'ledstrip') {
-    return <LedStripBody lit={lit} onClick={onClick} />
+    return <LedStripBody lit={lit} pixels={pixels} onClick={onClick} />
   }
   // LED: dome + two leads.
   if (componentId === 'led-5mm-red') {
@@ -360,6 +380,7 @@ function ComponentWithPins({ c, selected, lit, simActive }: {
   const move = useStore((s) => s.moveComponent)
   const simulating = useStore((s) => s.simulating)
   const simLog = useStore((s) => s.simLog)
+  const pixels = useStore((s) => s.simStrips[c.instance])
   const pressButton = useStore((s) => s.pressButton)
   const releaseButton = useStore((s) => s.releaseButton)
   const def = catalog.getComponent(c.componentId)
@@ -407,7 +428,7 @@ function ComponentWithPins({ c, selected, lit, simActive }: {
           : glbUrl
             ? <LoadedGlb url={glbUrl} scale={def?.scale ?? 1} lit={lit} simActive={simActive} />
             : <DefaultBody componentId={c.componentId} schematicSymbol={resolveSchematicSymbol(def?.schematic)} selected={selected} lit={lit}
-                           isButton={isButton} simActive={simActive}
+                           pixels={pixels} isButton={isButton} simActive={simActive}
                            onClick={() => {}} />}
       </group>
       {def?.pins.map((p) => {

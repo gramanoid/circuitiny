@@ -14,7 +14,7 @@ export interface AgentCallbacks {
   onError: (err: string) => void
 }
 
-export type ProviderType = 'ollama' | 'openai' | 'anthropic' | 'openrouter'
+export type ProviderType = 'ollama' | 'openai' | 'anthropic' | 'openrouter' | 'claudecode'
 
 export interface ProviderConfig {
   provider: ProviderType
@@ -27,8 +27,9 @@ export interface ProviderConfig {
 }
 
 export const PROVIDER_DEFAULTS: Record<ProviderType, { label: string; defaultModel: string; baseUrl: string; needsKey: boolean }> = {
-  ollama:     { label: 'Ollama (local)',  defaultModel: 'qwen3.5:latest',                  baseUrl: 'http://localhost:11434', needsKey: false },
-  openai:     { label: 'OpenAI',          defaultModel: 'gpt-4o',                           baseUrl: 'https://api.openai.com/v1',  needsKey: true  },
-  anthropic:  { label: 'Anthropic',       defaultModel: 'claude-sonnet-4-6',                baseUrl: 'https://api.anthropic.com',   needsKey: true  },
-  openrouter: { label: 'OpenRouter',      defaultModel: 'anthropic/claude-sonnet-4-6',      baseUrl: 'https://openrouter.ai/api/v1', needsKey: true  },
+  ollama:      { label: 'Ollama (local)',   defaultModel: 'qwen3.5:latest',             baseUrl: 'http://localhost:11434',        needsKey: false },
+  openai:      { label: 'OpenAI',           defaultModel: 'gpt-4o',                     baseUrl: 'https://api.openai.com/v1',     needsKey: true  },
+  anthropic:   { label: 'Anthropic',        defaultModel: 'claude-sonnet-4-6',          baseUrl: 'https://api.anthropic.com',     needsKey: true  },
+  openrouter:  { label: 'OpenRouter',       defaultModel: 'anthropic/claude-sonnet-4-6', baseUrl: 'https://openrouter.ai/api/v1', needsKey: true  },
+  claudecode:  { label: 'Claude Code (Pro)', defaultModel: 'sonnet',                    baseUrl: '',                              needsKey: false },
 }

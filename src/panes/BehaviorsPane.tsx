@@ -1,12 +1,13 @@
 import { useStore } from '../store'
 import type { Behavior, TriggerKind, Action } from '../project/schema'
 import { catalog } from '../catalog'
+import { STRIP_LED_N } from '../sim/evaluate'
 
 type TriggerType = TriggerKind['type']
 type ActionType = Action['type']
 
 const TRIGGER_TYPES: TriggerType[] = ['boot', 'timer', 'gpio_edge', 'wifi_connected']
-const ACTION_TYPES: ActionType[] = ['set_output', 'toggle', 'log', 'delay']
+const ACTION_TYPES: ActionType[] = ['set_output', 'toggle', 'log', 'delay', 'set_pixel', 'set_strip']
 
 export default function BehaviorsPane() {
   const project = useStore((s) => s.project)
@@ -17,6 +18,7 @@ export default function BehaviorsPane() {
   const { behaviors } = project
   const drivableTargets = collectDrivableTargets(project)
   const boardInputs = collectBoardInputs(project)
+  const stripInstances = collectStripInstances(project)
 
   return (
     <div style={{ padding: 8, overflow: 'auto', height: '100%', fontSize: 11 }}>
@@ -39,18 +41,20 @@ export default function BehaviorsPane() {
                       onPatch={(p) => updateBehavior(beh.id, p)}
                       onRemove={() => removeBehavior(beh.id)}
                       drivableTargets={drivableTargets}
-                      boardInputs={boardInputs} />
+                      boardInputs={boardInputs}
+                      stripInstances={stripInstances} />
       ))}
     </div>
   )
 }
 
-function BehaviorCard({ beh, onPatch, onRemove, drivableTargets, boardInputs }: {
+function BehaviorCard({ beh, onPatch, onRemove, drivableTargets, boardInputs, stripInstances }: {
   beh: Behavior
   onPatch: (p: Partial<Behavior>) => void
   onRemove: () => void
   drivableTargets: string[]
   boardInputs: string[]
+  stripInstances: string[]
 }) {
   const setTriggerType = (type: TriggerType) => {
     let t: TriggerKind
@@ -71,6 +75,8 @@ function BehaviorCard({ beh, onPatch, onRemove, drivableTargets, boardInputs }: 
       case 'toggle':     a = { type: 'toggle',     target: drivableTargets[0] ?? '' }; break
       case 'log':        a = { type: 'log', level: 'info', message: 'hello' }; break
       case 'delay':      a = { type: 'delay', ms: 500 }; break
+      case 'set_pixel':  a = { type: 'set_pixel', target: stripInstances[0] ?? '', index: 0, r: 255, g: 0, b: 0 }; break
+      case 'set_strip':  a = { type: 'set_strip', target: stripInstances[0] ?? '', pixels: Array(STRIP_LED_N).fill([255, 0, 0] as [number,number,number]) }; break
       default: return
     }
     onPatch({ actions: [...beh.actions, a] })
@@ -119,12 +125,12 @@ function BehaviorCard({ beh, onPatch, onRemove, drivableTargets, boardInputs }: 
         <div key={i} style={row}>
           <button onClick={() => moveAction(i, -1)} style={tinyBtn} disabled={i === 0}>↑</button>
           <button onClick={() => moveAction(i, 1)} style={tinyBtn} disabled={i === beh.actions.length - 1}>↓</button>
-          <select value={a.type} onChange={(e) => patchAction(i, convertAction(e.target.value as ActionType, drivableTargets))}
+          <select value={a.type} onChange={(e) => patchAction(i, convertAction(e.target.value as ActionType, drivableTargets, stripInstances))}
                   style={select}>
             {ACTION_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
           <ActionParams action={a} onPatch={(next) => patchAction(i, next)}
-                        drivableTargets={drivableTargets} />
+                        drivableTargets={drivableTargets} stripInstances={stripInstances} />
           <button onClick={() => removeAction(i)} style={iconBtn}>✕</button>
         </div>
       ))}
@@ -174,10 +180,11 @@ function TriggerParams({ trigger, onPatch, boardInputs }: {
   return null
 }
 
-function ActionParams({ action, onPatch, drivableTargets }: {
+function ActionParams({ action, onPatch, drivableTargets, stripInstances }: {
   action: Action
   onPatch: (a: Action) => void
   drivableTargets: string[]
+  stripInstances: string[]
 }) {
   if (action.type === 'set_output') {
     return (
@@ -221,15 +228,67 @@ function ActionParams({ action, onPatch, drivableTargets }: {
       </>
     )
   }
+  if (action.type === 'set_pixel') {
+    return (
+      <>
+        <select value={action.target} onChange={(e) => onPatch({ ...action, target: e.target.value })} style={select}>
+          {stripInstances.length === 0 && <option value="">(add a strip)</option>}
+          {stripInstances.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <span style={muted}>#</span>
+        <input type="number" min={0} max={STRIP_LED_N - 1} value={action.index}
+               onChange={(e) => onPatch({ ...action, index: Math.max(0, Math.min(STRIP_LED_N - 1, parseInt(e.target.value) || 0)) })}
+               style={{ ...numInput, width: 40 }} />
+        <RgbInputs r={action.r} g={action.g} b={action.b}
+                   onChange={(r, g, b) => onPatch({ ...action, r, g, b })} />
+      </>
+    )
+  }
+  if (action.type === 'set_strip') {
+    const first = action.pixels[0] ?? [0, 0, 0]
+    return (
+      <>
+        <select value={action.target} onChange={(e) => onPatch({ ...action, target: e.target.value })} style={select}>
+          {stripInstances.length === 0 && <option value="">(add a strip)</option>}
+          {stripInstances.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <span style={muted}>all</span>
+        <RgbInputs r={first[0]} g={first[1]} b={first[2]}
+                   onChange={(r, g, b) => onPatch({ ...action, pixels: Array(STRIP_LED_N).fill([r, g, b] as [number,number,number]) })} />
+      </>
+    )
+  }
   return null
 }
 
-function convertAction(type: ActionType, targets: string[]): Action {
+function RgbInputs({ r, g, b, onChange }: { r: number; g: number; b: number; onChange: (r: number, g: number, b: number) => void }) {
+  const clamp = (v: number) => Math.max(0, Math.min(255, v))
+  return (
+    <>
+      <span style={{ ...muted, color: '#f66' }}>R</span>
+      <input type="number" min={0} max={255} value={r}
+             onChange={(e) => onChange(clamp(parseInt(e.target.value) || 0), g, b)}
+             style={{ ...numInput, width: 44 }} />
+      <span style={{ ...muted, color: '#6f6' }}>G</span>
+      <input type="number" min={0} max={255} value={g}
+             onChange={(e) => onChange(r, clamp(parseInt(e.target.value) || 0), b)}
+             style={{ ...numInput, width: 44 }} />
+      <span style={{ ...muted, color: '#88f' }}>B</span>
+      <input type="number" min={0} max={255} value={b}
+             onChange={(e) => onChange(r, g, clamp(parseInt(e.target.value) || 0))}
+             style={{ ...numInput, width: 44 }} />
+    </>
+  )
+}
+
+function convertAction(type: ActionType, targets: string[], strips: string[]): Action {
   switch (type) {
     case 'set_output': return { type: 'set_output', target: targets[0] ?? '', value: 'on' }
     case 'toggle':     return { type: 'toggle',     target: targets[0] ?? '' }
     case 'log':        return { type: 'log', level: 'info', message: '' }
     case 'delay':      return { type: 'delay', ms: 500 }
+    case 'set_pixel':  return { type: 'set_pixel', target: strips[0] ?? '', index: 0, r: 255, g: 0, b: 0 }
+    case 'set_strip':  return { type: 'set_strip', target: strips[0] ?? '', pixels: Array(STRIP_LED_N).fill([255, 0, 0] as [number,number,number]) }
     default:           return { type: 'log', level: 'info', message: '' }
   }
 }
@@ -246,6 +305,15 @@ function collectDrivableTargets(project: ReturnType<typeof useStore.getState>['p
     }
   }
   return out
+}
+
+function collectStripInstances(project: ReturnType<typeof useStore.getState>['project']): string[] {
+  return project.components
+    .filter((c) => {
+      const def = catalog.getComponent(c.componentId)
+      return def?.sim?.role === 'ledstrip' || def?.schematic?.symbol === 'ledstrip'
+    })
+    .map((c) => c.instance)
 }
 
 function collectBoardInputs(project: ReturnType<typeof useStore.getState>['project']): string[] {

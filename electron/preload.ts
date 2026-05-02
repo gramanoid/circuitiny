@@ -35,7 +35,14 @@ const api = {
     const fn = (_: IpcRendererEvent, e: IdfExitEvent) => cb(e)
     ipcRenderer.on('idf:exit', fn)
     return () => ipcRenderer.removeListener('idf:exit', fn)
-  }
+  },
+
+  claudeCodeChat: (opts: {
+    prompt: string
+    systemAppend: string
+    model: string
+  }): Promise<{ ok: boolean; text?: string; error?: string }> =>
+    ipcRenderer.invoke('claudeCodeChat', opts),
 }
 
 contextBridge.exposeInMainWorld('espAI', api)

@@ -49,6 +49,8 @@ export type Action =
   | { type: 'sequence'; actions: Action[] }
   | { type: 'if'; cond: string; then: Action[]; else?: Action[] }
   | { type: 'call_user_fn'; name: string }
+  | { type: 'set_pixel'; target: string; index: number; r: number; g: number; b: number }
+  | { type: 'set_strip'; target: string; pixels: Array<[number, number, number]> }
 
 export interface Behavior {
   id: string

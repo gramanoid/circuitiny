@@ -41,6 +41,7 @@ interface State {
   simPhase: 0 | 1               // ticks at ~1 Hz while simulating (kept for legacy visuals)
   simTime: number               // elapsed simulated milliseconds
   simGpios: Record<string, boolean>  // GPIO label -> output state (board-pin label, e.g. "2", "16")
+  simStrips: Record<string, Array<[number, number, number]>>  // instance → per-pixel [r,g,b]
   simLog: string[]              // most recent simulation log lines
   pendingEdges: Array<{ label: string; type: 'rising' | 'falling' }>
   simSpeed: 1 | 2 | 5 | 10     // time multiplier applied each tick
@@ -65,7 +66,7 @@ interface State {
   bumpCatalog: () => void
   setSimulating: (b: boolean) => void
   tickSim: () => void
-  simStep: (dtMs: number, gpios: Record<string, boolean>, logs: string[]) => void
+  simStep: (dtMs: number, gpios: Record<string, boolean>, strips: Record<string, Array<[number, number, number]>>, logs: string[]) => void
   pressButton: (boardPinLabel: string) => void
   releaseButton: (boardPinLabel: string) => void
   setSimSpeed: (s: 1 | 2 | 5 | 10) => void
@@ -106,6 +107,7 @@ export const useStore = create<State>((set) => ({
   simPhase: 0,
   simTime: 0,
   simGpios: {},
+  simStrips: {},
   simLog: [],
   pendingEdges: [],
   simSpeed: 1,
@@ -116,7 +118,7 @@ export const useStore = create<State>((set) => ({
   loadProject: (project, path) => set({
     project, savedPath: path ?? null, dirty: false,
     mode: 'project', selected: null, pendingPin: null,
-    simulating: false, simTime: 0, simGpios: {}, simLog: [], pendingEdges: []
+    simulating: false, simTime: 0, simGpios: {}, simStrips: {}, simLog: [], pendingEdges: []
   }),
   markSaved: (savedPath) => set({ savedPath, dirty: false }),
   openBoardPicker: () => set({ showBoardPicker: true }),
@@ -199,13 +201,14 @@ export const useStore = create<State>((set) => ({
   bumpCatalog: () => set((s) => ({ catalogVersion: s.catalogVersion + 1 })),
   setSimulating: (b) => set({
     simulating: b, simPhase: 0,
-    simTime: 0, simGpios: {}, simLog: b ? ['[sim] start'] : [], pendingEdges: []
+    simTime: 0, simGpios: {}, simStrips: {}, simLog: b ? ['[sim] start'] : [], pendingEdges: []
   }),
   tickSim: () => set((s) => ({ simPhase: s.simPhase === 0 ? 1 : 0 })),
-  simStep: (dtMs, gpios, logs) => set((s) => ({
+  simStep: (dtMs, gpios, strips, logs) => set((s) => ({
     simTime: s.simTime + dtMs,
     simPhase: s.simPhase === 0 ? 1 : 0,
     simGpios: gpios,
+    simStrips: strips,
     simLog: [...s.simLog, ...logs].slice(-200),
     pendingEdges: []
   })),

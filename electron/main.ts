@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url'
 import { readFile, writeFile, mkdir, readdir } from 'fs/promises'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'child_process'
 import { randomUUID } from 'crypto'
 import * as pty from 'node-pty'
 
@@ -221,6 +221,58 @@ ipcMain.handle('idfStart', async (_e, opts: {
     })
   }
   return { runId, cwd: dir, cmd }
+})
+
+// ---- Claude Code session chat ----
+
+const CLAUDE_EXTRA_PATHS = [
+  join(homedir(), '.local', 'bin'),
+  '/opt/homebrew/bin',
+  '/usr/local/bin',
+]
+
+ipcMain.handle('claudeCodeChat', async (_e, opts: {
+  prompt: string
+  systemAppend: string
+  model: string
+}): Promise<{ ok: boolean; text?: string; error?: string }> => {
+  const claudePath = join(homedir(), '.local', 'bin', 'claude')
+  const binary = existsSync(claudePath) ? claudePath : 'claude'
+  const PATH = [...CLAUDE_EXTRA_PATHS, process.env.PATH ?? ''].join(':')
+
+  return new Promise((resolve) => {
+    const args = [
+      '-p',
+      '--no-session-persistence',
+      '--output-format', 'text',
+      '--model', opts.model || 'sonnet',
+      '--append-system-prompt', opts.systemAppend,
+    ]
+
+    const child = spawn(binary, args, {
+      env: { ...process.env, PATH },
+    }) as ChildProcess
+
+    let stdout = ''
+    let stderr = ''
+
+    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf8') })
+    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString('utf8') })
+
+    child.stdin?.write(opts.prompt)
+    child.stdin?.end()
+
+    child.on('exit', (code) => {
+      if (code === 0) {
+        resolve({ ok: true, text: stdout })
+      } else {
+        resolve({ ok: false, error: stderr.trim() || `claude exited with code ${code}` })
+      }
+    })
+    child.on('error', (err) => {
+      resolve({ ok: false, error: err.message })
+    })
+  })
 })
 
 // ---- Project save / open ----
