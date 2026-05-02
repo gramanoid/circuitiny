@@ -44,10 +44,12 @@ export default function App() {
     if (result) loadProject(result.project as import('./project/schema').Project, result.path)
   }
 
-  // Cmd+S / Ctrl+S — registered once, reads fresh state via getState()
+  // Cmd+S / Ctrl+S, Cmd+Z / Ctrl+Z, Cmd+Shift+Z / Ctrl+Shift+Z
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); handleSave() }
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); handleSave(); return }
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'z') { e.preventDefault(); useStore.getState().undo(); return }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'z') { e.preventDefault(); useStore.getState().redo(); return }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

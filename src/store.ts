@@ -31,6 +31,8 @@ export type PinRef = string  // "instance.pinId" or "board.pinId"
 interface State {
   mode: Mode
   project: Project
+  past: Project[]
+  future: Project[]
   savedPath: string | null
   dirty: boolean                // true whenever project has unsaved changes
   showBoardPicker: boolean
@@ -54,6 +56,8 @@ interface State {
   openBoardPicker: () => void
   createProject: (name: string, boardId: string) => void
   select: (instance: string | null) => void
+  undo: () => void
+  redo: () => void
 
   clickPin: (ref: PinRef) => void
   cancelWire: () => void
@@ -94,9 +98,16 @@ const newDraft = (): CatalogDraft => ({
   scale: 1, pins: [], selectedPin: null
 })
 
+// Push current project onto the undo stack before a circuit mutation.
+function snapshot(s: State) {
+  return { past: [...s.past.slice(-49), s.project], future: [] as Project[] }
+}
+
 export const useStore = create<State>((set) => ({
   mode: 'project',
   project: seed(),
+  past: [],
+  future: [],
   savedPath: null,
   dirty: false,
   showBoardPicker: false,
@@ -117,13 +128,14 @@ export const useStore = create<State>((set) => ({
   setProject: (project) => set({ project, dirty: true }),
   loadProject: (project, path) => set({
     project, savedPath: path ?? null, dirty: false,
+    past: [], future: [],
     mode: 'project', selected: null, pendingPin: null,
     simulating: false, simTime: 0, simGpios: {}, simStrips: {}, simLog: [], pendingEdges: []
   }),
   markSaved: (savedPath) => set({ savedPath, dirty: false }),
   openBoardPicker: () => set({ showBoardPicker: true }),
   createProject: (name, boardId) => {
-    set({ project: emptyProject(name || 'untitled', boardId), savedPath: null, dirty: false, showBoardPicker: false, selected: null, pendingPin: null })
+    set({ project: emptyProject(name || 'untitled', boardId), savedPath: null, dirty: false, past: [], future: [], showBoardPicker: false, selected: null, pendingPin: null })
   },
   select: (selected) => set({ selected }),
 
@@ -145,15 +157,15 @@ export const useStore = create<State>((set) => ({
     } else {
       nets.push({ id: `net${nets.length + 1}`, endpoints: [a, b] })
     }
-    return { pendingPin: null, dirty: true, project: { ...s.project, nets } }
+    return { ...snapshot(s), pendingPin: null, dirty: true, project: { ...s.project, nets } }
   }),
   cancelWire: () => set({ pendingPin: null }),
   removeNet: (id) => set((s) => ({
-    dirty: true,
+    ...snapshot(s), dirty: true,
     project: { ...s.project, nets: s.project.nets.filter((n) => n.id !== id) }
   })),
   rewireBoardPin: (netId, toBoardPinId) => set((s) => ({
-    dirty: true,
+    ...snapshot(s), dirty: true,
     project: {
       ...s.project,
       nets: s.project.nets.map((n) => n.id !== netId ? n : {
@@ -172,7 +184,7 @@ export const useStore = create<State>((set) => ({
     while (names.has(instance)) { n++; instance = `${base}${n}` }
     const x = 0.04 + (existing * 0.01)
     return {
-      dirty: true,
+      ...snapshot(s), dirty: true,
       project: { ...s.project, components: [...s.project.components, {
         instance, componentId, position: [x, 0.005, 0.02], pinAssignments: {}
       }]},
@@ -180,7 +192,7 @@ export const useStore = create<State>((set) => ({
     }
   }),
   removeComponent: (instance) => set((s) => ({
-    dirty: true,
+    ...snapshot(s), dirty: true,
     project: {
       ...s.project,
       components: s.project.components.filter((c) => c.instance !== instance),
@@ -191,7 +203,7 @@ export const useStore = create<State>((set) => ({
     selected: s.selected === instance ? null : s.selected
   })),
   moveComponent: (instance, position) => set((s) => ({
-    dirty: true,
+    ...snapshot(s), dirty: true,
     project: {
       ...s.project,
       components: s.project.components.map((c) =>
@@ -223,14 +235,14 @@ export const useStore = create<State>((set) => ({
   setSimSpeed: (simSpeed) => set({ simSpeed }),
 
   setCustomCode: (file, code) => set((s) => ({
-    dirty: true,
+    ...snapshot(s), dirty: true,
     project: { ...s.project, customCode: { ...s.project.customCode, [file]: code } }
   })),
 
   addBehavior: () => {
     const id = `beh${Date.now().toString(36)}`
     set((s) => ({
-      dirty: true,
+      ...snapshot(s), dirty: true,
       project: {
         ...s.project,
         behaviors: [...s.project.behaviors, {
@@ -241,11 +253,11 @@ export const useStore = create<State>((set) => ({
     return id
   },
   removeBehavior: (id) => set((s) => ({
-    dirty: true,
+    ...snapshot(s), dirty: true,
     project: { ...s.project, behaviors: s.project.behaviors.filter((b) => b.id !== id) }
   })),
   updateBehavior: (id, patch) => set((s) => ({
-    dirty: true,
+    ...snapshot(s), dirty: true,
     project: {
       ...s.project,
       behaviors: s.project.behaviors.map((b) => b.id === id ? { ...b, ...patch } : b)
@@ -254,13 +266,34 @@ export const useStore = create<State>((set) => ({
   setBehavior: (b) => set((s) => {
     const exists = s.project.behaviors.some((x) => x.id === b.id)
     return {
-      dirty: true,
+      ...snapshot(s), dirty: true,
       project: {
         ...s.project,
         behaviors: exists
           ? s.project.behaviors.map((x) => x.id === b.id ? b : x)
           : [...s.project.behaviors, b]
       }
+    }
+  }),
+
+  undo: () => set((s) => {
+    if (!s.past.length) return {}
+    const prev = s.past[s.past.length - 1]
+    return {
+      project: prev,
+      past: s.past.slice(0, -1),
+      future: [s.project, ...s.future].slice(0, 50),
+      dirty: true,
+    }
+  }),
+  redo: () => set((s) => {
+    if (!s.future.length) return {}
+    const next = s.future[0]
+    return {
+      project: next,
+      past: [...s.past, s.project].slice(-50),
+      future: s.future.slice(1),
+      dirty: true,
     }
   }),
 
