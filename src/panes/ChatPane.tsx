@@ -9,6 +9,13 @@ import { useStore } from '../store'
 const LS_KEY     = 'circuitiny:provider-cfg'
 const LS_EXPERT  = 'circuitiny:expert-mode'
 
+const STARTER_PROMPTS = [
+  'Blink an LED every second',
+  'Turn an LED on when a button is pressed',
+  'Read a temperature sensor and log the value',
+  'Build a traffic light with red, yellow, and green LEDs',
+]
+
 function loadCfg() {
   try { return JSON.parse(localStorage.getItem(LS_KEY) ?? '{}') } catch { return {} }
 }
@@ -285,11 +292,26 @@ export default function ChatPane() {
       {/* ── message list ── */}
       <div ref={scroller} style={{ flex: 1, overflow: 'auto', padding: 8, fontSize: 11 }}>
         {msgs.length === 0 && (
-          <div style={{ color: '#666', fontStyle: 'italic' }}>
-            {expertMode
-              ? 'Expert mode: describe your goal and the agent will research, plan, and wire the circuit autonomously.'
-              : 'Try: "Add an LED and wire it to GPIO4 with ground", then "run DRC".'}
-          </div>
+          expertMode ? (
+            <div style={{ color: '#666', fontStyle: 'italic' }}>
+              Expert mode: describe your goal and the agent will research, plan, and wire the circuit autonomously.
+            </div>
+          ) : (
+            <div>
+              <div style={{ color: '#555', fontSize: 10, marginBottom: 8 }}>Not sure where to start? Try one of these:</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {STARTER_PROMPTS.map((p) => (
+                  <button key={p} onClick={() => setInput(p)}
+                          style={{ background: '#161b24', color: '#a8c4e8',
+                                   border: '1px solid #2a3a50', borderRadius: 4,
+                                   padding: '6px 10px', fontSize: 10, cursor: 'pointer',
+                                   textAlign: 'left', lineHeight: 1.3 }}>
+                    {p}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )
         )}
         {msgs.map((m, i) => <Message key={i} m={m} />)}
         {busy && <div style={{ color: '#888', fontStyle: 'italic' }}>thinking…</div>}

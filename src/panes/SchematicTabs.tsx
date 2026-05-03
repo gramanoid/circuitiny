@@ -8,6 +8,8 @@ type Tab = 'schematic' | 'behaviors'
 export default function SchematicTabs() {
   const [tab, setTab] = useState<Tab>('schematic')
   const behaviorCount = useStore((s) => s.project.behaviors.length)
+  const componentCount = useStore((s) => s.project.components.length)
+  const showNudge = tab === 'schematic' && componentCount > 0 && behaviorCount === 0
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -18,6 +20,17 @@ export default function SchematicTabs() {
           Behaviors{behaviorCount > 0 ? ` (${behaviorCount})` : ''}
         </button>
       </div>
+      {showNudge && (
+        <div style={{ padding: '5px 10px', background: '#121c2a', borderBottom: '1px solid #1e3050',
+                      fontSize: 10, color: '#7aabdf', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>Components added — now give them something to do</span>
+          <button onClick={() => setTab('behaviors')}
+                  style={{ background: '#1a3050', color: '#7aabdf', border: '1px solid #2a5080',
+                           borderRadius: 3, padding: '2px 8px', fontSize: 10, cursor: 'pointer' }}>
+            Open Behaviors →
+          </button>
+        </div>
+      )}
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {tab === 'schematic' ? <Schematic /> : <BehaviorsPane />}
       </div>

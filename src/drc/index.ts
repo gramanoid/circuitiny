@@ -71,7 +71,7 @@ function ruleInputOnlyOutput(project: Project): Violation[] {
       out.push({
         id: 'gpio.input_only',
         severity: 'error',
-        message: `GPIO${boardPinLabel} is input-only on ${board.name} but is driven as output`,
+        message: `GPIO${boardPinLabel} can only receive signals, not send them — pick a different pin for this output`,
         involves: net.endpoints,
         fixHint: {
           action: 'reassign_pin',
@@ -98,7 +98,7 @@ function ruleFlashPinUsed(project: Project): Violation[] {
       out.push({
         id: 'gpio.flash_pin',
         severity: 'error',
-        message: `GPIO${label} is reserved for SPI flash — using it externally will brick the board`,
+        message: `GPIO${label} is used internally by the ESP32's flash chip — connecting anything here will brick your board`,
         involves: net.endpoints,
         fixHint: {
           action: 'reassign_pin',
@@ -123,7 +123,7 @@ function ruleVoltageMismatch(project: Project): Violation[] {
       out.push({
         id: 'electrical.voltage_mismatch',
         severity: 'error',
-        message: 'VIN (5V) connected to a 3.3V-only signal pin',
+        message: '5V (VIN) is connected to a GPIO — ESP32 pins are 3.3V-only and will be damaged by 5V',
         involves: net.endpoints,
         fixHint: {
           action: 'remove_net',
@@ -145,7 +145,7 @@ function rulePowerToGroundShort(project: Project): Violation[] {
       out.push({
         id: 'electrical.short',
         severity: 'error',
-        message: 'Net shorts power directly to ground',
+        message: 'Power and ground are directly connected — this short circuit will damage your board',
         involves: net.endpoints,
         fixHint: {
           action: 'remove_net',
@@ -164,7 +164,7 @@ function ruleNetSize(project: Project): Violation[] {
       out.push({
         id: 'wiring.dangling',
         severity: 'warning',
-        message: `Net ${net.id} has only one endpoint (${net.endpoints[0] ?? '?'})`,
+        message: `Wire "${net.endpoints[0] ?? '?'}" has only one end connected — connect the other end or delete this wire`,
         involves: net.endpoints,
         fixHint: {
           action: 'connect_or_remove',
@@ -214,7 +214,7 @@ function ruleStrappingPin(project: Project): Violation[] {
       out.push({
         id: 'gpio.strapping',
         severity: 'warning',
-        message: `GPIO${label} is a boot strapping pin — driving it at boot can prevent the chip from starting`,
+        message: `GPIO${label} affects how the ESP32 boots — a signal on this pin at power-on may prevent the chip from starting`,
         involves: net.endpoints,
         fixHint: {
           action: 'reassign_pin',
@@ -285,7 +285,7 @@ function ruleLedWithoutResistor(project: Project): Violation[] {
       out.push({
         id: 'electronics.led_no_resistor',
         severity: 'warning',
-        message: `${c.instance} is wired directly to a GPIO with no series resistor — the LED will likely burn out at 3.3 V`,
+        message: `${c.instance} has no resistor in series — without one, too much current will flow and burn out the LED. Add a 220Ω resistor.`,
         involves: [`${c.instance}.anode`],
         fixHint: { action: 'add_component', componentId: 'resistor-220r' }
       })
@@ -310,7 +310,7 @@ function ruleI2sDirectionMismatch(project: Project): Violation[] {
       out.push({
         id: 'i2s.direction_mismatch',
         severity: 'error',
-        message: 'I2S data-in and data-out tied on the same net — these are opposite-direction signals',
+        message: 'I2S receive and transmit are on the same wire — these signals travel in opposite directions and need separate wires',
         involves: net.endpoints
       })
     }
