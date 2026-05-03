@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { type Project, emptyProject, type PinType, type Behavior } from './project/schema'
 import { catalog } from './catalog'
+import type { PendingSequence } from './sim/evaluate'
 
 export type Mode = 'project' | 'catalog-editor'
 
@@ -46,6 +47,7 @@ interface State {
   simStrips: Record<string, Array<[number, number, number]>>  // instance → per-pixel [r,g,b]
   simLog: string[]              // most recent simulation log lines
   pendingEdges: Array<{ label: string; type: 'rising' | 'falling' }>
+  simPendingSequences: PendingSequence[]
   simSpeed: 1 | 2 | 5 | 10     // time multiplier applied each tick
   draft: CatalogDraft
 
@@ -70,7 +72,7 @@ interface State {
   bumpCatalog: () => void
   setSimulating: (b: boolean) => void
   tickSim: () => void
-  simStep: (dtMs: number, gpios: Record<string, boolean>, strips: Record<string, Array<[number, number, number]>>, logs: string[]) => void
+  simStep: (dtMs: number, gpios: Record<string, boolean>, strips: Record<string, Array<[number, number, number]>>, logs: string[], pendingSequences: PendingSequence[]) => void
   pressButton: (boardPinLabel: string) => void
   releaseButton: (boardPinLabel: string) => void
   setSimSpeed: (s: 1 | 2 | 5 | 10) => void
@@ -121,6 +123,7 @@ export const useStore = create<State>((set) => ({
   simStrips: {},
   simLog: [],
   pendingEdges: [],
+  simPendingSequences: [],
   simSpeed: 1,
   draft: newDraft(),
 
@@ -130,7 +133,7 @@ export const useStore = create<State>((set) => ({
     project, savedPath: path ?? null, dirty: false,
     past: [], future: [],
     mode: 'project', selected: null, pendingPin: null,
-    simulating: false, simTime: 0, simGpios: {}, simStrips: {}, simLog: [], pendingEdges: []
+    simulating: false, simTime: 0, simGpios: {}, simStrips: {}, simLog: [], pendingEdges: [], simPendingSequences: []
   }),
   markSaved: (savedPath) => set({ savedPath, dirty: false }),
   openBoardPicker: () => set({ showBoardPicker: true }),
@@ -213,16 +216,17 @@ export const useStore = create<State>((set) => ({
   bumpCatalog: () => set((s) => ({ catalogVersion: s.catalogVersion + 1 })),
   setSimulating: (b) => set({
     simulating: b, simPhase: 0,
-    simTime: 0, simGpios: {}, simStrips: {}, simLog: b ? ['[sim] start'] : [], pendingEdges: []
+    simTime: 0, simGpios: {}, simStrips: {}, simLog: b ? ['[sim] start'] : [], pendingEdges: [], simPendingSequences: []
   }),
   tickSim: () => set((s) => ({ simPhase: s.simPhase === 0 ? 1 : 0 })),
-  simStep: (dtMs, gpios, strips, logs) => set((s) => ({
+  simStep: (dtMs, gpios, strips, logs, pendingSequences) => set((s) => ({
     simTime: s.simTime + dtMs,
     simPhase: s.simPhase === 0 ? 1 : 0,
     simGpios: gpios,
     simStrips: strips,
     simLog: [...s.simLog, ...logs].slice(-200),
-    pendingEdges: []
+    pendingEdges: [],
+    simPendingSequences: pendingSequences,
   })),
   pressButton: (label) => set((s) => ({
     simGpios: { ...s.simGpios, [label]: false },

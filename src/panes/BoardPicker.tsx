@@ -2,6 +2,9 @@ import { useState, useMemo, useEffect } from 'react'
 import { catalog } from '../catalog'
 import { useStore } from '../store'
 import type { BoardDef } from '../project/component'
+import TemplatePicker from './TemplatePicker'
+
+type Tab = 'templates' | 'blank'
 
 const CHIP_FAMILIES = ['All', 'ESP32', 'ESP32-S3', 'ESP32-C3', 'ESP32-C6'] as const
 type ChipFilter = typeof CHIP_FAMILIES[number]
@@ -132,6 +135,8 @@ export default function BoardPicker() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  const [tab, setTab] = useState<Tab>('templates')
   const [filter, setFilter] = useState<ChipFilter>('All')
   const [selectedBoardId, setSelectedBoardId] = useState('esp32-devkitc-v4')
   const [projectName, setProjectName] = useState('untitled')
@@ -162,113 +167,146 @@ export default function BoardPicker() {
         overflow: 'hidden',
       }}>
         {/* Header */}
-        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #2a2a2a',
-                      display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-          <div>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#eee' }}>Select a Board</h2>
-            <p style={{ margin: '4px 0 0', fontSize: 12, color: '#666' }}>
-              Choose the ESP32 board for your new project
-            </p>
-          </div>
-          <button onClick={close} style={{
-            background: 'transparent', border: 'none', color: '#666', fontSize: 18,
-            cursor: 'pointer', lineHeight: 1, padding: '0 2px', marginLeft: 16,
-          }} title="Close">✕</button>
-        </div>
-
-        {/* Filter tabs */}
-        <div style={{ display: 'flex', gap: 4, padding: '12px 24px 0', borderBottom: '1px solid #222' }}>
-          {CHIP_FAMILIES.map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              style={{
-                background: filter === f ? '#2a3140' : 'transparent',
-                color: filter === f ? '#fff' : '#666',
-                border: `1px solid ${filter === f ? '#4a90d9' : 'transparent'}`,
-                borderRadius: '4px 4px 0 0',
-                padding: '5px 12px',
-                fontSize: 11,
-                cursor: 'pointer',
-              }}
-            >{f}</button>
-          ))}
-        </div>
-
-        {/* Board grid */}
-        <div style={{
-          flex: 1,
-          overflowY: 'auto',
-          padding: 24,
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-          gap: 12,
-          alignContent: 'start',
-        }}>
-          {filtered.map((board) => (
-            <BoardCard
-              key={board.id}
-              board={board}
-              selected={board.id === selectedBoardId}
-              onSelect={() => setSelectedBoardId(board.id)}
-            />
-          ))}
-          {filtered.length === 0 && (
-            <p style={{ color: '#555', fontSize: 12, gridColumn: '1/-1' }}>No boards match this filter.</p>
-          )}
-        </div>
-
-        {/* Footer — project name + create */}
-        <div style={{
-          padding: '16px 24px',
-          borderTop: '1px solid #2a2a2a',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-        }}>
-          <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>
-              Project name
-            </label>
-            <input
-              value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && selectedBoard && createProject(projectName, selectedBoardId)}
-              style={{
-                width: '100%',
-                background: '#1e1e1e',
-                border: '1px solid #333',
-                borderRadius: 4,
-                color: '#eee',
-                fontSize: 13,
-                padding: '6px 10px',
-                outline: 'none',
-              }}
-            />
-          </div>
-          {selectedBoard && (
-            <div style={{ fontSize: 11, color: '#666', whiteSpace: 'nowrap' }}>
-              {selectedBoard.name}
+        <div style={{ padding: '20px 24px 0', borderBottom: '1px solid #2a2a2a' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#eee' }}>New Project</h2>
+              <p style={{ margin: '4px 0 0', fontSize: 12, color: '#666' }}>
+                Start from a template or create a blank project
+              </p>
             </div>
-          )}
-          <button
-            disabled={!selectedBoard}
-            onClick={() => selectedBoard && createProject(projectName, selectedBoardId)}
-            style={{
-              background: selectedBoard ? '#4a90d9' : '#2a2a2a',
-              color: selectedBoard ? '#fff' : '#555',
-              border: 'none',
-              borderRadius: 5,
-              padding: '8px 20px',
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: selectedBoard ? 'pointer' : 'not-allowed',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            Create Project
-          </button>
+            <button onClick={close} style={{
+              background: 'transparent', border: 'none', color: '#666', fontSize: 18,
+              cursor: 'pointer', lineHeight: 1, padding: '0 2px', marginLeft: 16,
+            }} title="Close">✕</button>
+          </div>
+
+          {/* Tab switcher */}
+          <div style={{ display: 'flex', gap: 4 }}>
+            {(['templates', 'blank'] as Tab[]).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                style={{
+                  background: tab === t ? '#2a3140' : 'transparent',
+                  color: tab === t ? '#fff' : '#666',
+                  border: `1px solid ${tab === t ? '#4a90d9' : 'transparent'}`,
+                  borderRadius: '4px 4px 0 0',
+                  padding: '6px 16px',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  fontWeight: tab === t ? 600 : 400,
+                }}
+              >
+                {t === 'templates' ? 'Templates' : 'Blank Project'}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {/* Templates tab */}
+        {tab === 'templates' && (
+          <TemplatePicker onClose={close} />
+        )}
+
+        {/* Blank project tab */}
+        {tab === 'blank' && (
+          <>
+            {/* Chip filter */}
+            <div style={{ display: 'flex', gap: 4, padding: '12px 24px 0', borderBottom: '1px solid #222' }}>
+              {CHIP_FAMILIES.map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  style={{
+                    background: filter === f ? '#2a3140' : 'transparent',
+                    color: filter === f ? '#fff' : '#666',
+                    border: `1px solid ${filter === f ? '#4a90d9' : 'transparent'}`,
+                    borderRadius: '4px 4px 0 0',
+                    padding: '5px 12px',
+                    fontSize: 11,
+                    cursor: 'pointer',
+                  }}
+                >{f}</button>
+              ))}
+            </div>
+
+            {/* Board grid */}
+            <div style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: 24,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+              gap: 12,
+              alignContent: 'start',
+            }}>
+              {filtered.map((board) => (
+                <BoardCard
+                  key={board.id}
+                  board={board}
+                  selected={board.id === selectedBoardId}
+                  onSelect={() => setSelectedBoardId(board.id)}
+                />
+              ))}
+              {filtered.length === 0 && (
+                <p style={{ color: '#555', fontSize: 12, gridColumn: '1/-1' }}>No boards match this filter.</p>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div style={{
+              padding: '16px 24px',
+              borderTop: '1px solid #2a2a2a',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+            }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>
+                  Project name
+                </label>
+                <input
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && selectedBoard && createProject(projectName, selectedBoardId)}
+                  style={{
+                    width: '100%',
+                    background: '#1e1e1e',
+                    border: '1px solid #333',
+                    borderRadius: 4,
+                    color: '#eee',
+                    fontSize: 13,
+                    padding: '6px 10px',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+              {selectedBoard && (
+                <div style={{ fontSize: 11, color: '#666', whiteSpace: 'nowrap' }}>
+                  {selectedBoard.name}
+                </div>
+              )}
+              <button
+                disabled={!selectedBoard}
+                onClick={() => selectedBoard && createProject(projectName, selectedBoardId)}
+                style={{
+                  background: selectedBoard ? '#4a90d9' : '#2a2a2a',
+                  color: selectedBoard ? '#fff' : '#555',
+                  border: 'none',
+                  borderRadius: 5,
+                  padding: '8px 20px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: selectedBoard ? 'pointer' : 'not-allowed',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Create Project
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

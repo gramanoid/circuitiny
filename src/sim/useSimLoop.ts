@@ -28,13 +28,14 @@ export function useSimLoop() {
       simGpios: first.gpios,
       simStrips: first.strips,
       simLog: [...s.simLog, ...preflight, ...first.logs].slice(-200),
+      simPendingSequences: first.pendingSequences,
     }))
     const id = window.setInterval(() => {
       const s = useStore.getState()
       if (!s.simulating) return
       const dt = SIM_TICK_MS * s.simSpeed
-      const step = stepBehaviors(s.project, s.simTime, s.simGpios, s.simStrips, dt, s.pendingEdges as import('./evaluate').GpioEdge[])
-      s.simStep(dt, step.gpios, step.strips, step.logs)
+      const step = stepBehaviors(s.project, s.simTime, s.simGpios, s.simStrips, dt, s.pendingEdges as import('./evaluate').GpioEdge[], s.simPendingSequences)
+      s.simStep(dt, step.gpios, step.strips, step.logs, step.pendingSequences)
     }, SIM_TICK_MS)
     return () => window.clearInterval(id)
     // Intentional: only re-seed when simulating flips; live project edits are
