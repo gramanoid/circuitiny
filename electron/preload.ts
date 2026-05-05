@@ -37,6 +37,25 @@ const api = {
     return () => ipcRenderer.removeListener('idf:exit', fn)
   },
 
+  simCompile: (name: string, appMainC: string): Promise<{ ok: boolean; binaryPath?: string; error?: string }> =>
+    ipcRenderer.invoke('simCompile', name, appMainC),
+  simStart: (binaryPath: string): Promise<{ runId: string }> =>
+    ipcRenderer.invoke('simStart', binaryPath),
+  simStop: (runId: string): Promise<{ ok: boolean; reason?: string }> =>
+    ipcRenderer.invoke('idfStop', runId),
+  simInject: (runId: string, line: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('simInject', runId, line),
+  onSimEvent: (cb: (e: { runId: string; line: string }) => void) => {
+    const fn = (_: IpcRendererEvent, e: { runId: string; line: string }) => cb(e)
+    ipcRenderer.on('sim:event', fn)
+    return () => ipcRenderer.removeListener('sim:event', fn)
+  },
+  onSimExit: (cb: (e: { runId: string; code: number | null; signal: string | null }) => void) => {
+    const fn = (_: IpcRendererEvent, e: { runId: string; code: number | null; signal: string | null }) => cb(e)
+    ipcRenderer.on('sim:exit', fn)
+    return () => ipcRenderer.removeListener('sim:exit', fn)
+  },
+
   claudeCodeChat: (opts: {
     prompt: string
     systemAppend: string

@@ -8,18 +8,19 @@ const SIM_TICK_MS = 100
 // Mount once in App. Keeps the sim loop alive regardless of which pane is visible.
 export function useSimLoop() {
   const simulating = useStore((s) => s.simulating)
+  const simMode    = useStore((s) => s.simMode)
   const project    = useStore((s) => s.project)
   const setSim     = useStore((s) => s.setSimulating)
 
   // Stop sim if DRC errors appear while running (e.g. user edits wiring mid-sim).
   useEffect(() => {
-    if (!simulating) return
+    if (!simulating || simMode !== 'js') return
     if (runDrc(project).errors.length > 0) setSim(false)
-  }, [simulating, project, setSim])
+  }, [simulating, simMode, project, setSim])
 
   // Seed GPIOs and start interval on sim start; clean up on stop.
   useEffect(() => {
-    if (!simulating) return
+    if (!simulating || simMode !== 'js') return
     const proj = useStore.getState().project
     const preflight = runDrc(proj).warnings.map((w) => `⚠ [preflight] ${w.message}`)
     const seed = initialGpios(proj)

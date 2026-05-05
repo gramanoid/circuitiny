@@ -223,6 +223,97 @@ ipcMain.handle('idfStart', async (_e, opts: {
   return { runId, cwd: dir, cmd }
 })
 
+// ---- Firmware sim ----
+
+const SIM_HAL_DIR = join(__dirname, '../../resources/sim_hal')
+const SIM_BUILD_ROOT = join(homedir(), 'circuitiny', 'sim')
+
+ipcMain.handle('simCompile', async (_e, name: string, appMainC: string) => {
+  const safe = (name || 'untitled').replace(/[^a-zA-Z0-9_-]/g, '_')
+  const dir = join(SIM_BUILD_ROOT, safe)
+  await mkdir(dir, { recursive: true })
+
+  const appMainPath = join(dir, 'app_main.c')
+  const simHalC     = join(SIM_HAL_DIR, 'sim_hal.c')
+  const binaryPath  = join(dir, 'firmware_sim')
+
+  await writeFile(appMainPath, appMainC, 'utf8')
+
+  const cmd = [
+    'clang', '-pthread', '-DSIM_MODE',
+    `-I${SIM_HAL_DIR}`,
+    simHalC, appMainPath,
+    '-o', binaryPath,
+  ].map((s) => JSON.stringify(s)).join(' ')
+
+  return new Promise<{ ok: boolean; binaryPath?: string; error?: string }>((resolve) => {
+    const child = spawn('bash', ['-c', cmd]) as ChildProcessWithoutNullStreams
+    let stderr = ''
+    child.stderr.on('data', (d: Buffer) => { stderr += d.toString('utf8') })
+    child.stdout.on('data', (d: Buffer) => { stderr += d.toString('utf8') })
+    child.on('exit', (code) => {
+      if (code === 0) resolve({ ok: true, binaryPath })
+      else resolve({ ok: false, error: stderr.trim() || `clang exited with code ${code}` })
+    })
+    child.on('error', (err) => resolve({ ok: false, error: err.message }))
+  })
+})
+
+ipcMain.handle('simStart', async (_e, binaryPath: string) => {
+  if (!existsSync(binaryPath)) throw new Error(`Binary not found: ${binaryPath}`)
+
+  // Make sure the binary is executable
+  const { execSync } = await import('child_process')
+  try { execSync(`chmod +x ${JSON.stringify(binaryPath)}`) } catch { /* ignore */ }
+
+  const runId = randomUUID()
+  const child = spawn(binaryPath, [], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  }) as ChildProcessWithoutNullStreams
+  runs.set(runId, child)
+
+  let buf = ''
+  child.stdout.on('data', (d: Buffer) => {
+    buf += d.toString('utf8')
+    const lines = buf.split('\n')
+    buf = lines.pop() ?? ''
+    for (const line of lines) {
+      if (line.trim()) {
+        mainWindow?.webContents.send('sim:event', { runId, line })
+      }
+    }
+  })
+  child.stderr.on('data', (d: Buffer) => {
+    const text = d.toString('utf8').trim()
+    if (text) {
+      mainWindow?.webContents.send('sim:event', {
+        runId,
+        line: JSON.stringify({ t: 'stderr', msg: text }),
+      })
+    }
+  })
+  child.on('exit', (code, signal) => {
+    runs.delete(runId)
+    mainWindow?.webContents.send('sim:exit', { runId, code, signal })
+  })
+  child.on('error', (err) => {
+    mainWindow?.webContents.send('sim:event', {
+      runId,
+      line: JSON.stringify({ t: 'stderr', msg: `spawn error: ${err.message}` }),
+    })
+  })
+
+  return { runId }
+})
+
+ipcMain.handle('simInject', async (_e, runId: string, line: string) => {
+  const handle = runs.get(runId)
+  if (!handle) return { ok: false, reason: 'not running' }
+  if (!('stdin' in handle)) return { ok: false, reason: 'no stdin' }
+  ;(handle as ChildProcessWithoutNullStreams).stdin.write(line + '\n')
+  return { ok: true }
+})
+
 // ---- Claude Code session chat ----
 
 const CLAUDE_EXTRA_PATHS = [

@@ -11,6 +11,7 @@ import BoardPicker from './panes/BoardPicker'
 import { useStore } from './store'
 import { hydrateCatalog } from './catalog/hydrate'
 import { useSimLoop } from './sim/useSimLoop'
+import { useNativeSimLoop } from './sim/useNativeSimLoop'
 
 export default function App() {
   const mode = useStore((s) => s.mode)
@@ -25,6 +26,7 @@ export default function App() {
   const markSaved = useStore((s) => s.markSaved)
 
   useSimLoop()
+  useNativeSimLoop()
 
   useEffect(() => {
     hydrateCatalog().then((n) => { if (n > 0) bump() }).catch(() => { /* ignore */ })

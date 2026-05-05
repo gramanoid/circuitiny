@@ -49,6 +49,11 @@ interface State {
   pendingEdges: Array<{ label: string; type: 'rising' | 'falling' }>
   simPendingSequences: PendingSequence[]
   simSpeed: 1 | 2 | 5 | 10     // time multiplier applied each tick
+  simMode: 'js' | 'native'
+  nativeCompileStatus: 'idle' | 'compiling' | 'ready' | 'error'
+  nativeCompileError: string | null
+  nativeBinaryPath: string | null
+  nativeRunId: string | null
   draft: CatalogDraft
 
   setMode: (m: Mode) => void
@@ -76,6 +81,9 @@ interface State {
   pressButton: (boardPinLabel: string) => void
   releaseButton: (boardPinLabel: string) => void
   setSimSpeed: (s: 1 | 2 | 5 | 10) => void
+  setSimMode: (m: 'js' | 'native') => void
+  setNativeCompile: (status: 'idle' | 'compiling' | 'ready' | 'error', error?: string | null, binaryPath?: string | null) => void
+  setNativeRunId: (id: string | null) => void
 
   setCustomCode: (file: string, code: string) => void
 
@@ -125,6 +133,11 @@ export const useStore = create<State>((set) => ({
   pendingEdges: [],
   simPendingSequences: [],
   simSpeed: 1,
+  simMode: 'js',
+  nativeCompileStatus: 'idle',
+  nativeCompileError: null,
+  nativeBinaryPath: null,
+  nativeRunId: null,
   draft: newDraft(),
 
   setMode: (mode) => set({ mode }),
@@ -237,6 +250,13 @@ export const useStore = create<State>((set) => ({
     pendingEdges: [...s.pendingEdges, { label, type: 'rising' as const }]
   })),
   setSimSpeed: (simSpeed) => set({ simSpeed }),
+  setSimMode: (simMode) => set({ simMode }),
+  setNativeCompile: (status, error = null, binaryPath = null) => set({
+    nativeCompileStatus: status,
+    nativeCompileError: error ?? null,
+    nativeBinaryPath: binaryPath ?? null,
+  }),
+  setNativeRunId: (nativeRunId) => set({ nativeRunId }),
 
   setCustomCode: (file, code) => set((s) => ({
     ...snapshot(s), dirty: true,
