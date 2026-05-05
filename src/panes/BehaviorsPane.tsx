@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useStore } from '../store'
 import type { Behavior, TriggerKind, Action } from '../project/schema'
 import { catalog } from '../catalog'
@@ -9,32 +10,126 @@ type ActionType = Action['type']
 const TRIGGER_TYPES: TriggerType[] = ['boot', 'timer', 'gpio_edge', 'wifi_connected']
 const ACTION_TYPES: ActionType[] = ['set_output', 'toggle', 'log', 'delay', 'set_pixel', 'set_strip']
 
+// ── Preset definitions ────────────────────────────────────────────────────────
+
+interface BehaviorPreset {
+  label: string
+  description: string
+  build: (targets: string[], inputs: string[]) => Omit<Behavior, 'id'>
+}
+
+const BEHAVIOR_PRESETS: BehaviorPreset[] = [
+  {
+    label: 'Blink every second',
+    description: 'Toggle a component on/off on a 1 s timer',
+    build: (targets) => ({
+      trigger: { type: 'timer', period_ms: 1000 },
+      actions: [{ type: 'toggle', target: targets[0] ?? '' }],
+    }),
+  },
+  {
+    label: 'Button press → on',
+    description: 'Turn a component on when a button is pressed',
+    build: (targets, inputs) => ({
+      trigger: { type: 'gpio_edge', source: inputs[0] ?? 'board.gpio0', edge: 'falling' },
+      debounce_ms: 50,
+      actions: [{ type: 'set_output', target: targets[0] ?? '', value: 'on' }],
+    }),
+  },
+  {
+    label: 'Button release → off',
+    description: 'Turn a component off when a button is released',
+    build: (targets, inputs) => ({
+      trigger: { type: 'gpio_edge', source: inputs[0] ?? 'board.gpio0', edge: 'rising' },
+      debounce_ms: 50,
+      actions: [{ type: 'set_output', target: targets[0] ?? '', value: 'off' }],
+    }),
+  },
+  {
+    label: 'On boot: log message',
+    description: 'Print a message to the serial log when the device starts',
+    build: () => ({
+      trigger: { type: 'boot' },
+      actions: [{ type: 'log', level: 'info', message: 'Device started' }],
+    }),
+  },
+  {
+    label: 'Fast blink (200 ms)',
+    description: 'Toggle a component rapidly — good for status indicators',
+    build: (targets) => ({
+      trigger: { type: 'timer', period_ms: 200 },
+      actions: [{ type: 'toggle', target: targets[0] ?? '' }],
+    }),
+  },
+]
+
+function PresetPicker({ drivableTargets, boardInputs, onPick }: {
+  drivableTargets: string[]
+  boardInputs: string[]
+  onPick: (preset: Omit<Behavior, 'id'>) => void
+}) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 9, color: '#666', textTransform: 'uppercase',
+                    letterSpacing: '0.08em', marginBottom: 6 }}>Quick start — pick a preset</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {BEHAVIOR_PRESETS.map((p) => (
+          <button key={p.label}
+                  onClick={() => onPick(p.build(drivableTargets, boardInputs))}
+                  style={{ background: '#161b24', color: '#a8c4e8',
+                           border: '1px solid #2a3a50', borderRadius: 4,
+                           padding: '6px 10px', fontSize: 10, cursor: 'pointer',
+                           textAlign: 'left', lineHeight: 1.4 }}
+                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#4a90d9')}
+                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#2a3a50')}>
+            <div style={{ fontWeight: 600 }}>{p.label}</div>
+            <div style={{ color: '#5a7a9a', fontSize: 9, marginTop: 1 }}>{p.description}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Main pane ─────────────────────────────────────────────────────────────────
+
 export default function BehaviorsPane() {
   const project = useStore((s) => s.project)
   const addBehavior = useStore((s) => s.addBehavior)
   const removeBehavior = useStore((s) => s.removeBehavior)
   const updateBehavior = useStore((s) => s.updateBehavior)
+  const [showPresets, setShowPresets] = useState(false)
 
   const { behaviors } = project
   const drivableTargets = collectDrivableTargets(project)
   const boardInputs = collectBoardInputs(project)
   const stripInstances = collectStripInstances(project)
 
+  function applyPreset(preset: Omit<Behavior, 'id'>) {
+    const id = addBehavior()
+    updateBehavior(id, preset)
+    setShowPresets(false)
+  }
+
   return (
     <div style={{ padding: 8, overflow: 'auto', height: '100%', fontSize: 11 }}>
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8, gap: 4 }}>
         <div style={{ flex: 1, color: '#888' }}>
           {behaviors.length} behavior{behaviors.length === 1 ? '' : 's'}
         </div>
+        {behaviors.length > 0 && (
+          <button onClick={() => setShowPresets((v) => !v)} style={ghostBtn}>
+            {showPresets ? 'hide presets' : 'from preset'}
+          </button>
+        )}
         <button onClick={addBehavior} style={primaryBtn}>+ add behavior</button>
       </div>
 
-      {behaviors.length === 0 && (
-        <div style={{ color: '#666', fontStyle: 'italic', padding: '20px 4px' }}>
-          No behaviors yet. A behavior is a <b>trigger</b> (when …) paired with one or more <b>actions</b> (do …).
-          Click “+ add behavior” to create one.
-        </div>
+      {(behaviors.length === 0 || showPresets) && (
+        <PresetPicker drivableTargets={drivableTargets} boardInputs={boardInputs} onPick={applyPreset} />
       )}
+
+      {behaviors.length === 0 && !showPresets && null}
 
       {behaviors.map((beh) => (
         <BehaviorCard key={beh.id} beh={beh}
@@ -343,6 +438,10 @@ const iconBtn: React.CSSProperties = {
   borderRadius: 2, padding: '0 6px', fontSize: 10, cursor: 'pointer', lineHeight: '18px'
 }
 const tinyBtn: React.CSSProperties = { ...iconBtn, minWidth: 20 }
+const ghostBtn: React.CSSProperties = {
+  background: 'transparent', color: '#888', border: '1px solid #333',
+  borderRadius: 3, padding: '3px 8px', fontSize: 11, cursor: 'pointer'
+}
 const primaryBtn: React.CSSProperties = {
   background: '#2a3140', color: '#fff', border: '1px solid #4a90d9',
   borderRadius: 3, padding: '3px 10px', fontSize: 11, cursor: 'pointer'
