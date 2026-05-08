@@ -6,6 +6,10 @@ import type { CatalogMeta, ComponentDef, SchematicSymbolSpec, SchematicSymbol, S
 const CATALOG_TRUST: Array<CatalogMeta['trust']> = ['builtin', 'ai-draft', 'user-installed', 'reviewed']
 const CATALOG_CONFIDENCE: Array<NonNullable<CatalogMeta['confidence']>> = ['high', 'medium', 'low']
 const CATALOG_RENDER_STRATEGY: Array<NonNullable<CatalogMeta['renderStrategy']>> = ['catalog-glb', 'draft-glb', 'primitive', 'generic-block']
+const CATALOG_LICENSE_USE = ['bundled-ok', 'local-import-only', 'blocked']
+const CATALOG_MODEL_FORMAT = ['glb', 'gltf', 'step', 'stp', 'wrl']
+const CATALOG_MODEL_EXACTNESS = ['exact', 'module', 'package', 'generic']
+const CATALOG_CONVERSION_STATUS = ['not-needed', 'needed', 'converter-unavailable', 'failed', 'converted']
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string')
@@ -20,6 +24,25 @@ function isValidCatalogMeta(meta: unknown): meta is CatalogMeta {
   if (m.sourceUrls !== undefined && !isStringArray(m.sourceUrls)) return false
   if (m.retrievedAt !== undefined && typeof m.retrievedAt !== 'string') return false
   if (m.reviewNotes !== undefined && !isStringArray(m.reviewNotes)) return false
+  if (m.modelAsset !== undefined && !isValidModelAssetMeta(m.modelAsset)) return false
+  return true
+}
+
+function isValidModelAssetMeta(asset: unknown): boolean {
+  if (!asset || typeof asset !== 'object') return false
+  const a = asset as Record<string, unknown>
+  if (typeof a.sourceId !== 'string') return false
+  if (typeof a.sourceUrl !== 'string') return false
+  if (a.assetUrl !== undefined && typeof a.assetUrl !== 'string') return false
+  if (typeof a.licenseName !== 'string') return false
+  if (typeof a.licenseUrl !== 'string') return false
+  if (!CATALOG_LICENSE_USE.includes(String(a.licenseUse))) return false
+  if (typeof a.attribution !== 'string') return false
+  if (!CATALOG_MODEL_FORMAT.includes(String(a.format))) return false
+  if (!CATALOG_MODEL_EXACTNESS.includes(String(a.exactness))) return false
+  if (!CATALOG_CONVERSION_STATUS.includes(String(a.conversionStatus))) return false
+  if (a.checksum !== undefined && typeof a.checksum !== 'string') return false
+  if (a.conversionLog !== undefined && !isStringArray(a.conversionLog)) return false
   return true
 }
 

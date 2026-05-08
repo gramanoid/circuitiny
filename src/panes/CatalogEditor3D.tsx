@@ -73,14 +73,15 @@ export default function CatalogEditor3D() {
   const url = useMemo(() => {
     if (!draft.glbData) return null
     const buf = draft.glbData.slice().buffer as ArrayBuffer
-    return URL.createObjectURL(new Blob([buf], { type: 'model/gltf-binary' }))
-  }, [draft.glbData])
+    const type = draft.glbName?.toLowerCase().endsWith('.gltf') ? 'model/gltf+json' : 'model/gltf-binary'
+    return URL.createObjectURL(new Blob([buf], { type }))
+  }, [draft.glbData, draft.glbName])
 
   if (!url) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
                     height: '100%', color: '#666' }}>
-        No model loaded. Use “Load .glb” in the side panel.
+        No model loaded. Use “Load .glb/.gltf” in the side panel.
       </div>
     )
   }

@@ -451,7 +451,8 @@ export const catalog = {
     components[def.id] = def
     if (glbData) {
       const buf = glbData.slice().buffer as ArrayBuffer
-      glbBlobs[def.id] = URL.createObjectURL(new Blob([buf], { type: 'model/gltf-binary' }))
+      const type = def.model?.toLowerCase().endsWith('.gltf') ? 'model/gltf+json' : 'model/gltf-binary'
+      glbBlobs[def.id] = URL.createObjectURL(new Blob([buf], { type }))
     }
   },
   removeComponent: (id: string) => {

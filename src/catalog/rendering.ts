@@ -83,6 +83,18 @@ export function catalogReviewWarnings(def: ComponentDef | undefined, hasGlb = fa
   const meta = def.catalogMeta
   if (meta?.trust === 'ai-draft') warnings.push('AI draft: review pins, voltage, and behavior before wiring hardware.')
   if ((meta?.confidence ?? 'medium') === 'low') warnings.push('Low confidence metadata: verify the datasheet or source before using this part.')
+  if (meta?.modelAsset?.licenseUse === 'local-import-only') {
+    warnings.push('Local import only: do not redistribute this model unless its license explicitly allows it.')
+  }
+  if (meta?.modelAsset?.licenseUse === 'blocked') {
+    warnings.push('Blocked model license: choose a different free/open model before using this part.')
+  }
+  if (meta?.modelAsset?.conversionStatus === 'needed') {
+    warnings.push('Model conversion is still needed before this visual asset can be trusted.')
+  }
+  if (meta?.modelAsset?.exactness === 'package' || meta?.modelAsset?.exactness === 'generic') {
+    warnings.push('Approximate visual model: compare it with your real part before wiring.')
+  }
   if (!hasGlb) {
     warnings.push(meta?.renderStrategy === 'generic-block'
       ? 'No GLB or family renderer found: this part will render as a generic block.'
@@ -109,6 +121,7 @@ export function promoteCatalogMeta(meta: CatalogMeta | undefined, hasGlb: boolea
     retrievedAt: meta?.retrievedAt,
     renderStrategy,
     reviewNotes: Array.from(notes),
+    modelAsset: meta?.modelAsset,
   }
 }
 

@@ -9,6 +9,8 @@ import {
   type RecommendPartsResult,
   type RecommendProjectsResult,
   type RunDrcResult,
+  type SearchModelLibraryResult,
+  type ImportModelCandidateResult,
 } from '../src/agent/tools'
 import { useStore } from '../src/store'
 import { TEMPLATES } from '../src/templates'
@@ -17,6 +19,8 @@ import { catalog } from '../src/catalog'
 import { resolveCatalogRender } from '../src/catalog/rendering'
 
 describe('agent tools for beginner guidance', () => {
+  const previousWindow = (globalThis as any).window
+
   beforeEach(() => {
     useStore.getState().loadProject(emptyProject('agent-tool-test', 'esp32-devkitc-v4'))
   })
@@ -25,6 +29,10 @@ describe('agent tools for beginner guidance', () => {
     if (catalog.getComponent('capacitive-soil-moisture-sensor')) {
       catalog.removeComponent('capacitive-soil-moisture-sensor')
     }
+    if (catalog.getComponent('model-slide-switch-eg1218-antmicro')) {
+      catalog.removeComponent('model-slide-switch-eg1218-antmicro')
+    }
+    ;(globalThis as any).window = previousWindow
   })
 
   it('get_project includes active beginner recipe context', async () => {
@@ -71,6 +79,58 @@ describe('agent tools for beginner guidance', () => {
       const data = result.data as MatchPartsDatabaseResult
       expect(data.part.id).toBe('ssd1306-oled-i2c')
       expect(data.part.reviewRequired).toBe(true)
+    }
+  })
+
+  it('searches free/open model candidates with license and format metadata', async () => {
+    const ctx = makeExecContext()
+    const result = await execTool('search_model_library', { query: 'slide switch', native_only: true }, ctx)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const data = result.data as SearchModelLibraryResult
+      expect(data.candidates.length).toBeGreaterThan(0)
+      expect(data.candidates[0].licenseUse).toBe('bundled-ok')
+      expect(['gltf', 'glb']).toContain(data.candidates[0].format)
+      expect(ctx.modelCandidates.has(data.candidates[0].id)).toBe(true)
+    }
+  })
+
+  it('requires approval before importing model candidates', async () => {
+    const denied = await execTool('import_model_candidate', {
+      candidate_id: 'antmicro-slide-switch-eg1218',
+      approved: false,
+    })
+    expect(denied.ok).toBe(false)
+  })
+
+  it('imports an approved native model candidate as a draft catalog component', async () => {
+    const ctx = makeExecContext()
+    const search = await execTool('search_model_library', { query: 'slide switch', native_only: true }, ctx)
+    expect(search.ok).toBe(true)
+    ;(globalThis as any).window = {
+      espAI: {
+        installModelAsset: async ({ componentJson }: { componentJson: string }) => ({
+          ok: true,
+          componentJson,
+          modelName: 'model-slide-switch-eg1218-antmicro.gltf',
+          modelData: new Uint8Array([123, 34, 97, 115, 115, 101, 116, 34, 58, 49, 125]),
+          savedTo: '/tmp/circuitiny/catalog/model-slide-switch-eg1218-antmicro',
+          conversionStatus: 'converted',
+          conversionLog: ['mock install'],
+        }),
+      },
+    }
+    const imported = await execTool('import_model_candidate', {
+      candidate_id: 'antmicro-slide-switch-eg1218',
+      approved: true,
+    }, ctx)
+    expect(imported.ok).toBe(true)
+    if (imported.ok) {
+      const data = imported.data as ImportModelCandidateResult
+      expect(data.componentId).toBe('model-slide-switch-eg1218-antmicro')
+      expect(data.catalogMeta?.renderStrategy).toBe('draft-glb')
+      expect(data.catalogMeta?.modelAsset?.sourceId).toBe('antmicro-hardware-components')
+      expect(catalog.getComponent('model-slide-switch-eg1218-antmicro')).toBeDefined()
     }
   })
 

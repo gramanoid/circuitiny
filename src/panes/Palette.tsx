@@ -185,6 +185,12 @@ function CatalogStatusBadges({ component, renderInfo, includeConfidence = false 
           {meta.sourceUrls.length} source{meta.sourceUrls.length === 1 ? '' : 's'}
         </div>
       )}
+      {meta?.modelAsset && (
+        <div style={{ color: meta.modelAsset.licenseUse === 'bundled-ok' ? '#6688aa' : '#bba86a',
+                      fontSize: 9, marginTop: 2 }}>
+          {meta.modelAsset.format.toUpperCase()} · {meta.modelAsset.licenseUse}
+        </div>
+      )}
       {renderInfo.warnings.length > 0 && meta?.trust !== 'builtin' && (
         <div style={{ color: '#bba86a', fontSize: 9, marginTop: 2 }}>
           {renderInfo.warnings.length} review warning{renderInfo.warnings.length === 1 ? '' : 's'}

@@ -5,8 +5,9 @@ import { readFile, writeFile, mkdir, readdir, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { spawn, spawnSync, type ChildProcess, type ChildProcessWithoutNullStreams } from 'child_process'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import * as pty from 'node-pty'
+import { convertStepLikeCadToGlb } from './modelConversion'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const ICON_PATH = join(__dirname, '../../resources/icon.png')
@@ -15,6 +16,7 @@ const CATALOG_ROOT = join(CIRCUITINY_HOME, 'catalog')
 const PROJECTS_ROOT = join(homedir(), 'circuitiny', 'projects')
 const PARTS_PHOTO_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif']
 const PARTS_PHOTO_MAX_BYTES = 16 * 1024 * 1024
+const MODEL_ASSET_WARN_BYTES = 4 * 1024 * 1024
 type ExaCachedResult = { title: string; url: string; highlights: string[]; publishedDate?: string; retrievedAt: string }
 const exaPartSearchCache = new Map<string, { expiresAt: number; results: ExaCachedResult[] }>()
 // Resolution order: explicit override → IDF's own export.sh env var → standard install location
@@ -50,7 +52,7 @@ function createWindow() {
 
 ipcMain.handle('pickGlb', async () => {
   const r = await dialog.showOpenDialog({
-    title: 'Select a .glb model',
+    title: 'Select a .glb or .gltf model',
     filters: [{ name: '3D Model', extensions: ['glb', 'gltf'] }],
     properties: ['openFile']
   })
@@ -131,6 +133,73 @@ ipcMain.handle('writeComponentJson', async (_e, id: string, jsonText: string) =>
   return dir
 })
 
+ipcMain.handle('installModelAsset', async (_e, opts: {
+  asset: {
+    id: string
+    assetUrl?: string
+    sourceUrl: string
+    licenseUse: 'bundled-ok' | 'local-import-only' | 'blocked'
+    format: 'glb' | 'gltf' | 'step' | 'stp' | 'wrl'
+    modelFileName: string
+  }
+  componentJson: string
+  approved: boolean
+}) => {
+  if (opts?.approved !== true) return { ok: false, error: 'Model install requires explicit approval.' }
+  const asset = opts.asset
+  if (!asset?.id) return { ok: false, error: 'Model asset id is required.' }
+  if (asset.licenseUse === 'blocked') return { ok: false, error: 'This model is blocked by its license or payment requirement.' }
+  if (!opts.componentJson?.trim()) return { ok: false, error: 'componentJson is required.' }
+  let parsed: any
+  try {
+    parsed = JSON.parse(opts.componentJson)
+  } catch (err) {
+    return { ok: false, error: `Invalid componentJson: ${err instanceof Error ? err.message : String(err)}` }
+  }
+  if (!parsed?.id) return { ok: false, error: 'componentJson must include an id.' }
+  if (!Array.isArray(parsed?.pins)) return { ok: false, error: 'componentJson must include pins.' }
+  if (asset.format === 'wrl') {
+    return {
+      ok: false,
+      conversionStatus: 'converter-unavailable',
+      conversionLog: converterDiagnostics(asset.format),
+      error: 'WRL conversion needs a local converter. Install FreeCAD, Blender, assimp, or kicad-cli, then retry.',
+    }
+  }
+  const modelUrl = asset.assetUrl
+  if (!modelUrl) return { ok: false, error: 'This candidate does not expose a direct model URL. Download it locally and use Load .glb/.gltf.' }
+  try {
+    const model = await loadInstallableModelAsset(asset, modelUrl)
+    const checksum = sha256(model.data)
+    const jsonWithChecksum = JSON.stringify(withModelAssetInstallInfo(parsed, {
+      checksum,
+      byteLength: model.data.byteLength,
+      conversionStatus: model.conversionStatus,
+      conversionLog: model.log,
+      dimensionsMm: model.dimensionsMm,
+      modelName: model.modelName,
+      scale: model.scale,
+    }), null, 2)
+    const dir = await writeCatalogBundle(parsed.id, model.modelName, model.data, jsonWithChecksum)
+    return {
+      ok: true,
+      savedTo: dir,
+      componentJson: jsonWithChecksum,
+      modelName: model.modelName,
+      modelData: new Uint8Array(model.data),
+      conversionStatus: model.conversionStatus,
+      conversionLog: model.log,
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      conversionStatus: 'failed',
+      conversionLog: [`Failed to install ${asset.id}: ${err instanceof Error ? err.message : String(err)}`],
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+})
+
 function catalogEntryDirFor(id: string): string {
   if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error('invalid catalog id')
   const base = resolve(CATALOG_ROOT)
@@ -143,6 +212,258 @@ function catalogEntryDirFor(id: string): string {
 function safeCatalogFileName(name: string): string {
   if (!/^[A-Za-z0-9_.-]+$/.test(name) || name.includes('..')) throw new Error('invalid catalog asset name')
   return name
+}
+
+async function writeCatalogBundle(id: string, modelName: string, modelData: Uint8Array, jsonText: string): Promise<string> {
+  const dir = catalogEntryDirFor(id)
+  const safeModelName = safeCatalogFileName(modelName)
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, safeModelName), Buffer.from(modelData))
+  await writeFile(join(dir, 'component.json'), jsonText, 'utf8')
+  return dir
+}
+
+async function fetchRemoteBytes(url: string): Promise<{ data: Uint8Array; log: string[]; dimensionsMm?: { x: number; y: number; z: number } }> {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`HTTP ${response.status} while downloading ${url}`)
+  const data = new Uint8Array(await response.arrayBuffer())
+  return { data, log: [`Downloaded ${data.byteLength} bytes from ${url}`] }
+}
+
+async function loadInstallableModelAsset(asset: {
+  id: string
+  format: 'glb' | 'gltf' | 'step' | 'stp' | 'wrl'
+  modelFileName: string
+}, url: string): Promise<{
+  data: Uint8Array
+  log: string[]
+  dimensionsMm?: { x: number; y: number; z: number }
+  conversionStatus: 'not-needed' | 'converted'
+  modelName: string
+  scale?: number
+}> {
+  if (asset.format === 'gltf') {
+    const model = await fetchSelfContainedGltf(url)
+    return { ...model, conversionStatus: 'converted', modelName: ensureModelExtension(asset.modelFileName, 'gltf') }
+  }
+  if (asset.format === 'glb') {
+    const model = await fetchRemoteBytes(url)
+    return { ...model, conversionStatus: 'not-needed', modelName: ensureModelExtension(asset.modelFileName, 'glb') }
+  }
+  if (asset.format === 'step' || asset.format === 'stp') {
+    const downloaded = await fetchRemoteBytes(url)
+    const converted = await convertStepLikeCadToGlb(downloaded.data, asset.format, asset.modelFileName)
+    return {
+      data: converted.data,
+      log: [...downloaded.log, ...converted.log],
+      dimensionsMm: converted.dimensionsMm,
+      conversionStatus: 'converted',
+      modelName: ensureModelExtension(asset.modelFileName, 'glb'),
+      scale: 1,
+    }
+  }
+  throw new Error(`Unsupported model format: ${asset.format}`)
+}
+
+async function fetchSelfContainedGltf(url: string): Promise<{ data: Uint8Array; log: string[]; dimensionsMm?: { x: number; y: number; z: number } }> {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`HTTP ${response.status} while downloading ${url}`)
+  const root = new URL(url)
+  const gltf = JSON.parse(await response.text())
+  const log: string[] = [`Downloaded glTF from ${url}`]
+  const dimensionsMm = dimensionsFromGltfAccessors(gltf)
+  if (dimensionsMm) log.push(`Detected bounds ${dimensionsMm.x.toFixed(2)} x ${dimensionsMm.y.toFixed(2)} x ${dimensionsMm.z.toFixed(2)} model units`)
+
+  if (Array.isArray(gltf.buffers)) {
+    for (const buffer of gltf.buffers) {
+      if (!buffer?.uri || isDataUri(buffer.uri)) continue
+      const bufferUrl = new URL(buffer.uri, root).toString()
+      const embedded = await fetchDataUri(bufferUrl, 'application/octet-stream')
+      buffer.uri = embedded.uri
+      buffer.byteLength = embedded.byteLength
+      log.push(`Embedded buffer ${bufferUrl} (${embedded.byteLength} bytes)`)
+    }
+  }
+
+  if (Array.isArray(gltf.images)) {
+    const hasKtx2 = gltf.images.some((image: any) => typeof image?.uri === 'string' && image.uri.toLowerCase().endsWith('.ktx2'))
+    if (hasKtx2) {
+      applyTextureFallbackMaterialColors(gltf)
+      stripTextureReferences(gltf)
+      log.push('Stripped KTX2 texture references; Circuitiny keeps geometry with readable plastic/metal fallback material colors.')
+    } else {
+      for (const image of gltf.images) {
+        if (!image?.uri || isDataUri(image.uri)) continue
+        const imageUrl = new URL(image.uri, root).toString()
+        const embedded = await fetchDataUri(imageUrl, mimeForModelAsset(imageUrl))
+        image.uri = embedded.uri
+        log.push(`Embedded image ${imageUrl} (${embedded.byteLength} bytes)`)
+      }
+    }
+  }
+
+  const text = JSON.stringify(gltf)
+  return { data: new Uint8Array(Buffer.from(text, 'utf8')), log, dimensionsMm }
+}
+
+function stripTextureReferences(gltf: any): void {
+  if (Array.isArray(gltf.materials)) {
+    for (const material of gltf.materials) {
+      delete material.normalTexture
+      delete material.occlusionTexture
+      delete material.emissiveTexture
+      if (material.pbrMetallicRoughness) {
+        delete material.pbrMetallicRoughness.baseColorTexture
+        delete material.pbrMetallicRoughness.metallicRoughnessTexture
+      }
+    }
+  }
+  delete gltf.textures
+  delete gltf.images
+}
+
+function applyTextureFallbackMaterialColors(gltf: any): void {
+  if (!Array.isArray(gltf.materials)) return
+  for (const material of gltf.materials) {
+    const fallback = fallbackMaterialForName(String(material?.name ?? ''))
+    if (!material.pbrMetallicRoughness) material.pbrMetallicRoughness = {}
+    material.pbrMetallicRoughness.baseColorFactor = fallback.baseColorFactor
+    material.pbrMetallicRoughness.metallicFactor = fallback.metallicFactor
+    material.pbrMetallicRoughness.roughnessFactor = fallback.roughnessFactor
+  }
+}
+
+function fallbackMaterialForName(name: string): {
+  baseColorFactor: [number, number, number, number]
+  metallicFactor: number
+  roughnessFactor: number
+} {
+  const n = name.toLowerCase()
+  if (/(metal|pin|terminal|contact|lead)/.test(n)) {
+    return { baseColorFactor: [0.72, 0.69, 0.62, 1], metallicFactor: 0.78, roughnessFactor: 0.28 }
+  }
+  if (/(black|plastic|rubber|matte)/.test(n)) {
+    return { baseColorFactor: [0.015, 0.016, 0.018, 1], metallicFactor: 0.02, roughnessFactor: 0.52 }
+  }
+  if (/red/.test(n)) return { baseColorFactor: [0.75, 0.04, 0.03, 1], metallicFactor: 0.02, roughnessFactor: 0.46 }
+  if (/green/.test(n)) return { baseColorFactor: [0.08, 0.45, 0.18, 1], metallicFactor: 0.02, roughnessFactor: 0.5 }
+  if (/blue/.test(n)) return { baseColorFactor: [0.06, 0.22, 0.68, 1], metallicFactor: 0.02, roughnessFactor: 0.5 }
+  if (/(white|silk)/.test(n)) return { baseColorFactor: [0.84, 0.84, 0.78, 1], metallicFactor: 0.02, roughnessFactor: 0.48 }
+  return { baseColorFactor: [0.48, 0.5, 0.46, 1], metallicFactor: 0.08, roughnessFactor: 0.48 }
+}
+
+function dimensionsFromGltfAccessors(gltf: any): { x: number; y: number; z: number } | undefined {
+  if (!Array.isArray(gltf.accessors)) return undefined
+  let minX = Infinity, minY = Infinity, minZ = Infinity
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
+  for (const accessor of gltf.accessors) {
+    if (accessor?.type !== 'VEC3' || !Array.isArray(accessor.min) || !Array.isArray(accessor.max)) continue
+    minX = Math.min(minX, Number(accessor.min[0]))
+    minY = Math.min(minY, Number(accessor.min[1]))
+    minZ = Math.min(minZ, Number(accessor.min[2]))
+    maxX = Math.max(maxX, Number(accessor.max[0]))
+    maxY = Math.max(maxY, Number(accessor.max[1]))
+    maxZ = Math.max(maxZ, Number(accessor.max[2]))
+  }
+  if (![minX, minY, minZ, maxX, maxY, maxZ].every(Number.isFinite)) return undefined
+  return {
+    x: Math.max(0, maxX - minX),
+    y: Math.max(0, maxY - minY),
+    z: Math.max(0, maxZ - minZ),
+  }
+}
+
+async function fetchDataUri(url: string, mime: string): Promise<{ uri: string; byteLength: number }> {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`HTTP ${response.status} while downloading ${url}`)
+  const data = Buffer.from(await response.arrayBuffer())
+  return { uri: `data:${mime};base64,${data.toString('base64')}`, byteLength: data.byteLength }
+}
+
+function isDataUri(uri: string): boolean {
+  return /^data:/i.test(uri)
+}
+
+function mimeForModelAsset(url: string): string {
+  const path = new URL(url).pathname.toLowerCase()
+  if (path.endsWith('.png')) return 'image/png'
+  if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg'
+  if (path.endsWith('.webp')) return 'image/webp'
+  if (path.endsWith('.ktx2')) return 'image/ktx2'
+  if (path.endsWith('.bin')) return 'application/octet-stream'
+  return 'application/octet-stream'
+}
+
+function ensureModelExtension(name: string, extension: 'glb' | 'gltf'): string {
+  const base = name.replace(/\.(glb|gltf|step|stp|wrl)$/i, '')
+  return `${base}.${extension}`
+}
+
+function sha256(data: Uint8Array): string {
+  return createHash('sha256').update(Buffer.from(data)).digest('hex')
+}
+
+function withModelAssetInstallInfo(component: any, info: {
+  checksum: string
+  byteLength: number
+  conversionStatus: string
+  conversionLog: string[]
+  dimensionsMm?: { x: number; y: number; z: number }
+  modelName: string
+  scale?: number
+}): any {
+  const existingNotes = Array.isArray(component.catalogMeta?.reviewNotes) ? component.catalogMeta.reviewNotes : []
+  const heavyNote = info.byteLength > MODEL_ASSET_WARN_BYTES
+    ? [`Large model (${Math.round(info.byteLength / 1024)} KB): optimize before promoting if the viewer feels slow.`]
+    : []
+  return {
+    ...component,
+    model: info.modelName,
+    ...(typeof info.scale === 'number' ? { scale: info.scale } : {}),
+    catalogMeta: {
+      ...(component.catalogMeta ?? {}),
+      renderStrategy: 'draft-glb',
+      reviewNotes: Array.from(new Set([
+        ...existingNotes,
+        `Installed model bytes: ${info.byteLength}`,
+        ...heavyNote,
+      ])),
+      modelAsset: component.catalogMeta?.modelAsset
+        ? {
+            ...component.catalogMeta.modelAsset,
+            checksum: info.checksum,
+            conversionStatus: info.conversionStatus,
+            conversionLog: info.conversionLog,
+            ...(info.dimensionsMm ? { dimensionsMm: info.dimensionsMm } : {}),
+          }
+        : component.catalogMeta?.modelAsset,
+    },
+  }
+}
+
+function converterDiagnostics(format: string): string[] {
+  if (format === 'step' || format === 'stp') {
+    return [
+      `${format.toUpperCase()} assets are converted by Circuitiny's bundled occt-import-js/OpenCascade converter.`,
+      'If this import failed, the CAD file may contain geometry OpenCascade could not triangulate.',
+      'Native glTF/GLB assets can still be installed immediately.',
+    ]
+  }
+  const tools = [
+    { name: 'FreeCAD', binary: 'FreeCAD' },
+    { name: 'Blender', binary: 'blender' },
+    { name: 'Assimp', binary: 'assimp' },
+    { name: 'KiCad CLI', binary: 'kicad-cli' },
+  ]
+  const pathDirs = (process.env.PATH ?? '').split(delimiter)
+  const found = tools.filter((tool) => firstExistingCli(tool.binary, pathDirs))
+  return [
+    `${format.toUpperCase()} assets are CAD solids and need conversion before Circuitiny can render them as glTF/GLB.`,
+    found.length
+      ? `Detected converter candidates: ${found.map((tool) => tool.name).join(', ')}.`
+      : 'No supported converter binary was found on PATH.',
+    'Native glTF/GLB assets can be installed immediately.',
+  ]
 }
 
 // ---- M5: flash pipeline ----

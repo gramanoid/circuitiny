@@ -3,6 +3,7 @@ import { useStore, type CatalogDraft, type DraftPin, type Category } from '../st
 import type { PinType } from '../project/schema'
 import type { CatalogMeta, ComponentDef } from '../project/component'
 import { catalogReviewWarnings, promoteCatalogMeta } from '../catalog/rendering'
+import ModelLibraryPanel from './ModelLibraryPanel'
 
 const PIN_TYPES: PinType[] = [
   'power_in', 'power_out', 'ground',
@@ -16,7 +17,7 @@ const PIN_TYPES: PinType[] = [
 const CATEGORIES: Category[] = ['sensor', 'actuator', 'display', 'input', 'power', 'misc']
 const TRUST_OPTIONS: CatalogMeta['trust'][] = ['builtin', 'ai-draft', 'user-installed', 'reviewed']
 const CONFIDENCE_OPTIONS: Array<NonNullable<CatalogMeta['confidence']>> = ['high', 'medium', 'low']
-const RENDER_OPTIONS: Array<NonNullable<CatalogMeta['renderStrategy']>> = ['catalog-glb', 'primitive', 'generic-block']
+const RENDER_OPTIONS: Array<NonNullable<CatalogMeta['renderStrategy']>> = ['catalog-glb', 'draft-glb', 'primitive', 'generic-block']
 
 function lines(value: string): string[] {
   return value.split('\n').map((s) => s.trim()).filter(Boolean)
@@ -116,6 +117,13 @@ export default function CatalogEditorPanel() {
         <button onClick={reset} style={{ ...btnStyle, background: '#3a2222' }}>New</button>
       </section>
 
+      <section style={{ padding: 8, border: '1px solid #2b2b2b', borderRadius: 6, background: '#141414' }}>
+        <div style={{ color: '#aaa', fontSize: 11, fontWeight: 600, marginBottom: 8 }}>
+          Open Model Library
+        </div>
+        <ModelLibraryPanel />
+      </section>
+
       <section>
         <Field label="ID">
           <input value={draft.id} onChange={(e) => setMeta({ id: e.target.value })}
@@ -171,6 +179,28 @@ export default function CatalogEditorPanel() {
                     rows={2}
                     style={{ ...inputStyle, resize: 'vertical' }} />
         </Field>
+        {draft.catalogMeta?.modelAsset && (
+          <div style={{ color: '#8da0b8', fontSize: 10, lineHeight: 1.45, marginBottom: 8 }}>
+            <div>asset: {draft.catalogMeta.modelAsset.sourceId}</div>
+            <div>license: {draft.catalogMeta.modelAsset.licenseName}</div>
+            <div>use: {draft.catalogMeta.modelAsset.licenseUse}</div>
+            <div>format: {draft.catalogMeta.modelAsset.format} · {draft.catalogMeta.modelAsset.exactness}</div>
+            <div>conversion: {draft.catalogMeta.modelAsset.conversionStatus}</div>
+            {draft.catalogMeta.modelAsset.dimensionsMm && (
+              <div>
+                size: {draft.catalogMeta.modelAsset.dimensionsMm.x.toFixed(1)} × {draft.catalogMeta.modelAsset.dimensionsMm.y.toFixed(1)} × {draft.catalogMeta.modelAsset.dimensionsMm.z.toFixed(1)} mm
+              </div>
+            )}
+            {draft.catalogMeta.modelAsset.conversionLog?.length ? (
+              <div style={{ marginTop: 4 }}>
+                <div>conversion log:</div>
+                {draft.catalogMeta.modelAsset.conversionLog.slice(0, 4).map((line, i) => (
+                  <div key={`${line}-${i}`}>- {line}</div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        )}
         <Field label="Review notes">
           <textarea value={(draft.catalogMeta?.reviewNotes ?? []).join('\n')}
                     onChange={(e) => updateCatalogMeta({ reviewNotes: lines(e.target.value) })}
@@ -192,7 +222,7 @@ export default function CatalogEditorPanel() {
       </section>
 
       <section>
-        <button onClick={pick} style={btnStyle}>{draft.glbName ? '↻ Replace .glb' : '⤓ Load .glb'}</button>
+        <button onClick={pick} style={btnStyle}>{draft.glbName ? '↻ Replace model' : '⤓ Load .glb/.gltf'}</button>
         {draft.glbName && <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>{draft.glbName}</div>}
       </section>
 

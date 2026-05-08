@@ -4,6 +4,17 @@ export interface IdfLogEvent { runId: string; stream: 'stdout' | 'stderr'; text:
 export interface IdfExitEvent { runId: string; code: number | null; signal: string | null }
 export interface PartsPhoto { path: string; name: string; dataUrl: string }
 export interface ExaPartSearchResult { title: string; url: string; highlights: string[]; publishedDate?: string; retrievedAt?: string }
+export interface ModelInstallRequest { asset: unknown; componentJson: string; approved: boolean }
+export interface ModelInstallResult {
+  ok: boolean
+  componentJson?: string
+  modelName?: string
+  modelData?: Uint8Array
+  savedTo?: string
+  conversionStatus?: string
+  conversionLog?: string[]
+  error?: string
+}
 
 const api = {
   pickGlb: (): Promise<{ path: string; data: Uint8Array } | null> =>
@@ -16,6 +27,8 @@ const api = {
     ipcRenderer.invoke('writeComponentJson', id, jsonText),
   listCatalog: (): Promise<Array<{ id: string; json: any; glbData: Uint8Array | null }>> =>
     ipcRenderer.invoke('listCatalog'),
+  installModelAsset: (request: ModelInstallRequest): Promise<ModelInstallResult> =>
+    ipcRenderer.invoke('installModelAsset', request),
 
   saveProject: (project: unknown, suggestedName: string, existingPath?: string): Promise<string | null> =>
     ipcRenderer.invoke('saveProject', project, suggestedName, existingPath),

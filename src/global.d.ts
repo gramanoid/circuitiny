@@ -4,6 +4,17 @@ export interface IdfLogEvent { runId: string; stream: 'stdout' | 'stderr'; text:
 export interface IdfExitEvent { runId: string; code: number | null; signal: string | null }
 export interface PartsPhoto { path: string; name: string; dataUrl: string }
 export interface ExaPartSearchResult { title: string; url: string; highlights: string[]; publishedDate?: string; retrievedAt?: string }
+export interface ModelInstallRequest { asset: unknown; componentJson: string; approved: boolean }
+export interface ModelInstallResult {
+  ok: boolean
+  componentJson?: string
+  modelName?: string
+  modelData?: Uint8Array
+  savedTo?: string
+  conversionStatus?: string
+  conversionLog?: string[]
+  error?: string
+}
 
 declare global {
   interface Window {
@@ -13,6 +24,7 @@ declare global {
       writeBundle: (id: string, glbName: string, glbData: Uint8Array, jsonText: string) => Promise<string>
       writeComponentJson: (id: string, jsonText: string) => Promise<string>
       listCatalog: () => Promise<Array<{ id: string; json: any; glbData: Uint8Array | null }>>
+      installModelAsset: (request: ModelInstallRequest) => Promise<ModelInstallResult>
 
       saveProject: (project: unknown, suggestedName: string, existingPath?: string) => Promise<string | null>
       openProject: () => Promise<{ project: unknown; path: string } | null>

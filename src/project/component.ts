@@ -74,6 +74,26 @@ export interface SimDef {
 
 export type CatalogTrustState = 'builtin' | 'user-installed' | 'ai-draft' | 'reviewed'
 export type CatalogRenderStrategy = 'catalog-glb' | 'primitive' | 'draft-glb' | 'generic-block'
+export type CatalogLicenseUse = 'bundled-ok' | 'local-import-only' | 'blocked'
+export type CatalogModelFormat = 'glb' | 'gltf' | 'step' | 'stp' | 'wrl'
+export type CatalogModelExactness = 'exact' | 'module' | 'package' | 'generic'
+export type CatalogConversionStatus = 'not-needed' | 'needed' | 'converter-unavailable' | 'failed' | 'converted'
+
+export interface CatalogModelAssetMeta {
+  sourceId: string
+  sourceUrl: string
+  assetUrl?: string
+  licenseName: string
+  licenseUrl: string
+  licenseUse: CatalogLicenseUse
+  attribution: string
+  format: CatalogModelFormat
+  exactness: CatalogModelExactness
+  conversionStatus: CatalogConversionStatus
+  checksum?: string
+  dimensionsMm?: { x: number; y: number; z: number }
+  conversionLog?: string[]
+}
 
 export interface CatalogMeta {
   trust: CatalogTrustState
@@ -82,6 +102,7 @@ export interface CatalogMeta {
   retrievedAt?: string
   renderStrategy?: CatalogRenderStrategy
   reviewNotes?: string[]
+  modelAsset?: CatalogModelAssetMeta
 }
 
 export interface ComponentDef {

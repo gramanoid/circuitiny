@@ -15,6 +15,7 @@ import { candidatesFromDescription, parsePhotoCandidates } from '../parts/photoA
 import { lookupPartKnowledge, lookupPartKnowledgeWithWeb } from '../parts/retrieval'
 import { recommendProjectsFromInventory } from '../parts/recommendations'
 import type { ExaSearchResult, InventoryItem, PartKnowledgeRecord, PhotoCandidate, ProjectRecommendation } from '../parts/types'
+import { componentFromModelAsset, modelAssetById, searchModelAssets, type ModelAssetCandidate } from '../modelLibrary'
 
 type PartRecommendation = ReturnType<typeof recommendParts>[number]
 const DRAFT_PIN_HORIZONTAL_SPACING_M = 0.003
@@ -35,10 +36,11 @@ const VALID_DRAFT_PIN_TYPES: ReadonlySet<PinType> = new Set([
 export type ExecContext = {
   failedCalls: Map<string, number>
   recommendedParts: Map<string, PartRecommendation>
+  modelCandidates: Map<string, ModelAssetCandidate>
   signal?: AbortSignal
 }
 export function makeExecContext(signal?: AbortSignal): ExecContext {
-  return { failedCalls: new Map(), recommendedParts: new Map(), signal }
+  return { failedCalls: new Map(), recommendedParts: new Map(), modelCandidates: new Map(), signal }
 }
 
 export interface ToolDef {
@@ -462,6 +464,37 @@ export const tools: ToolDef[] = [
   {
     type: 'function',
     function: {
+      name: 'search_model_library',
+      description: 'Search free/open electronics CAD model candidates. Returns source, license, format, conversion need, and review warnings before any download or catalog write.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Part name, family, or exact part number, e.g. "5mm LED", "JST 4 pin", or "USB-C connector".' },
+          bundled_only: { type: 'boolean', description: 'True to include only redistributable/open bundled-ok candidates.' },
+          native_only: { type: 'boolean', description: 'True to include only native GLB/glTF candidates that do not need STEP conversion.' }
+        },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'import_model_candidate',
+      description: 'Install a searched model candidate as a draft catalog bundle after explicit learner approval. Native GLB/glTF can install now; STEP/STP/WRL requires a configured converter.',
+      parameters: {
+        type: 'object',
+        properties: {
+          candidate_id: { type: 'string', description: 'Candidate id returned by search_model_library.' },
+          approved: { type: 'boolean', description: 'Must be true only after the learner explicitly approved download/import.' }
+        },
+        required: ['candidate_id', 'approved']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'recommend_projects_from_inventory',
       description: 'Recommend beginner-friendly projects from confirmed parts. Pass only parts the learner confirmed they have.',
       parameters: {
@@ -525,6 +558,19 @@ export interface SearchPartsWebResult {
   query: string
   results: ExaSearchResult[]
   part: PartKnowledgeRecord
+}
+
+export interface SearchModelLibraryResult {
+  query: string
+  candidates: ModelAssetCandidate[]
+}
+
+export interface ImportModelCandidateResult {
+  componentId: string
+  savedTo?: string | null
+  conversionStatus?: string
+  conversionLog?: string[]
+  catalogMeta?: ComponentDef['catalogMeta']
 }
 
 export interface RecommendProjectsResult {
@@ -1265,6 +1311,66 @@ async function handleSearchPartsWeb(args: Record<string, any>): Promise<ToolResu
   }
 }
 
+async function handleSearchModelLibrary(args: Record<string, any>, ctx?: ExecContext): Promise<ToolResult> {
+  const query = String(args.query ?? '').trim()
+  if (!query) return { ok: false, error: 'search_model_library requires query.' }
+  const result = searchModelAssets(query, {
+    licenseUse: args.bundled_only === true ? ['bundled-ok'] : undefined,
+    formats: args.native_only === true ? ['glb', 'gltf'] : undefined,
+  })
+  const candidates = result.candidates.slice(0, 8)
+  if (ctx) {
+    for (const candidate of candidates) ctx.modelCandidates.set(candidate.id, candidate)
+  }
+  return {
+    ok: true,
+    data: {
+      query,
+      candidates,
+      counts: result.counts,
+      nextStep: 'Show source, license, format, and conversion need. Ask the learner before import_model_candidate.',
+    },
+  }
+}
+
+async function handleImportModelCandidate(args: Record<string, any>, ctx?: ExecContext): Promise<ToolResult> {
+  if (args.approved !== true) {
+    return { ok: false, error: 'import_model_candidate requires approved: true after explicit learner approval.' }
+  }
+  const candidateId = String(args.candidate_id ?? '').trim()
+  if (!candidateId) return { ok: false, error: 'candidate_id is required.' }
+  const candidate = ctx?.modelCandidates.get(candidateId) ?? modelAssetById(candidateId)
+  if (!candidate) return { ok: false, error: `No model candidate "${candidateId}" found. Call search_model_library first.` }
+  if (candidate.licenseUse === 'blocked') return { ok: false, error: 'This model candidate is blocked by license or payment requirements.' }
+  const component = componentFromModelAsset(candidate)
+  const componentJson = JSON.stringify(component, null, 2)
+  const api = typeof window !== 'undefined' ? window.espAI : undefined
+  if (!api?.installModelAsset) {
+    return { ok: false, error: 'Model import is only available inside the Electron app.' }
+  }
+  const installed = await api.installModelAsset({ asset: candidate, componentJson, approved: true })
+  if (!installed.ok) {
+    return {
+      ok: false,
+      error: installed.error ?? 'Model import failed.',
+    }
+  }
+  const parsed = JSON.parse(installed.componentJson ?? componentJson) as ComponentDef
+  catalog.registerComponent(parsed, installed.modelData ?? null)
+  useStore.getState().bumpCatalog()
+  return {
+    ok: true,
+    data: {
+      componentId: parsed.id,
+      savedTo: installed.savedTo ?? null,
+      conversionStatus: installed.conversionStatus,
+      conversionLog: installed.conversionLog ?? [],
+      catalogMeta: parsed.catalogMeta,
+      nextStep: 'Open Catalog Editor and review scale, pins, source, and license before trusting this part.',
+    },
+  }
+}
+
 async function handleRecommendProjectsFromInventory(args: Record<string, any>): Promise<ToolResult> {
   const rawParts = Array.isArray(args.parts) ? args.parts : []
   const partNames = rawParts.map((part) => String(part ?? '').trim()).filter(Boolean)
@@ -1408,6 +1514,8 @@ const HANDLERS: Record<string, Handler> = {
   analyze_parts_photo: (args) => handleAnalyzePartsPhoto(args),
   match_parts_database: (args) => handleMatchPartsDatabase(args),
   search_parts_web: (args) => handleSearchPartsWeb(args),
+  search_model_library: (args, ctx) => handleSearchModelLibrary(args, ctx),
+  import_model_candidate: (args, ctx) => handleImportModelCandidate(args, ctx),
   recommend_projects_from_inventory: (args) => handleRecommendProjectsFromInventory(args),
   create_recipe_from_project: (args) => handleCreateRecipeFromProject(args),
 }
