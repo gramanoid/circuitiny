@@ -132,7 +132,6 @@ const PRIMITIVE_ACCENT: Record<PrimitiveRenderKind, string> = {
   display: '#35aaff',
   sensor: '#50a36b',
   resistor: '#d8b36a',
-  capacitor: '#4f8fcf',
   led: '#ff5a4f',
   button: '#aaa',
   relay: '#8a8a8a',

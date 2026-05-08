@@ -1,5 +1,5 @@
 import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber'
-import { OrbitControls, Grid, Environment, Html, TransformControls, useGLTF, ContactShadows } from '@react-three/drei'
+import { OrbitControls, Grid, Environment, Html, CubicBezierLine, TransformControls, useGLTF, ContactShadows } from '@react-three/drei'
 import { useStore } from '../store'
 import React, { Suspense, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import * as THREE from 'three'
@@ -22,31 +22,20 @@ function PinAnchor({ pin, owner, position, color, glow, onClick }: {
   glow: number
   onClick: () => void
 }) {
-  const showLabel = owner === 'board' || glow > 0.5
-  const label = owner === 'board' ? pin.label : `${owner}.${pin.id}`
   return (
     <group position={position}>
-      <mesh position={[0, -0.00045, 0]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.00135, 0.00135, 0.00065, 16]} />
-        <meshStandardMaterial color="#111" roughness={0.62} />
-      </mesh>
       <mesh renderOrder={10}
             onClick={(e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); onClick() }}>
-        <sphereGeometry args={[0.00095, 12, 12]} />
+        <sphereGeometry args={[0.0012, 12, 12]} />
         <meshStandardMaterial color={color} emissive={color} emissiveIntensity={glow}
                               depthTest={false} depthWrite={false} />
       </mesh>
-      {showLabel && (
-        <Html distanceFactor={owner === 'board' ? 0.075 : 0.1} style={{ pointerEvents: 'none' }}>
-          <div style={{ background: owner === 'board' ? 'rgba(255,255,255,0.82)' : '#222',
-                        color: owner === 'board' ? '#111' : '#eee',
-                        padding: owner === 'board' ? '1px 3px' : '2px 6px',
-                        borderRadius: 2, fontSize: owner === 'board' ? 7 : 10,
-                        fontFamily: '"SF Mono", Menlo, monospace',
-                        whiteSpace: 'nowrap',
-                        border: owner === 'board' ? '1px solid rgba(0,0,0,0.18)' : `1px solid ${color}`,
-                        transform: owner === 'board' ? 'translate(-50%,-160%)' : 'translate(8px,-50%)' }}>
-            {label}
+      {glow > 0.5 && (
+        <Html distanceFactor={0.1} style={{ pointerEvents: 'none' }}>
+          <div style={{ background: '#222', color: '#eee', padding: '2px 6px',
+                        borderRadius: 3, fontSize: 10, whiteSpace: 'nowrap',
+                        border: `1px solid ${color}`, transform: 'translate(8px,-50%)' }}>
+            {owner}.{pin.id}
           </div>
         </Html>
       )}
@@ -97,33 +86,12 @@ function BoardMesh({ board }: { board: import('../project/component').BoardDef }
         <boxGeometry args={[pcbW * 0.38, 0.003, pcbD * 0.65]} />
         <meshStandardMaterial color="#d8dde0" metalness={0.85} roughness={0.24} />
       </mesh>
-      {/* ESP32 module detail: black package, antenna keepout, and two tiny tactile buttons. */}
-      <mesh position={[cx + pcbW * 0.08, 0.0102, cz]} castShadow>
-        <boxGeometry args={[pcbW * 0.16, 0.0014, pcbD * 0.24]} />
-        <meshStandardMaterial color="#151515" roughness={0.55} />
-      </mesh>
-      <mesh position={[maxX - 0.004, 0.0064, cz]} castShadow>
-        <boxGeometry args={[0.006, 0.00045, pcbD * 0.62]} />
-        <meshStandardMaterial color="#e2d7a5" metalness={0.15} roughness={0.5} />
-      </mesh>
-      {[-0.007, 0.007].map((z) => (
-        <group key={z} position={[usbX + 0.012, 0.009, cz + z]}>
-          <mesh castShadow>
-            <boxGeometry args={[0.004, 0.0012, 0.003]} />
-            <meshStandardMaterial color="#202020" roughness={0.6} />
-          </mesh>
-          <mesh position={[0, 0.0008, 0]} castShadow>
-            <boxGeometry args={[0.0026, 0.0007, 0.002]} />
-            <meshStandardMaterial color="#d5d5d5" metalness={0.35} roughness={0.28} />
-          </mesh>
-        </group>
-      ))}
       {/* Pin header rails — one per unique z edge */}
       {uniqueZ.map((z) => (
-          <mesh key={z} position={[cx, 0.0062, z]}>
-            <boxGeometry args={[pcbW - margin, 0.002, 0.0025]} />
-            <meshStandardMaterial color="#111315" roughness={0.72} />
-          </mesh>
+        <mesh key={z} position={[cx, 0.0062, z]}>
+          <boxGeometry args={[pcbW - margin, 0.002, 0.0025]} />
+          <meshStandardMaterial color="#111315" roughness={0.72} />
+        </mesh>
       ))}
     </group>
   )
@@ -337,34 +305,6 @@ function DefaultBody({ primitiveKind, onClick, selected, lit, pixels, isButton, 
       </group>
     )
   }
-  if (primitiveKind === 'capacitor') {
-    return (
-      <group onClick={onClick}>
-        <mesh position={[0, 0.001, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
-          <cylinderGeometry args={[0.0028, 0.0028, 0.0045, 24]} />
-          <meshStandardMaterial color={selected ? '#3c70a8' : '#234f7a'} roughness={0.34} metalness={0.08} />
-        </mesh>
-        <mesh position={[0, 0.0036, 0]} rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.00285, 0.00285, 0.00035, 24]} />
-          <meshStandardMaterial color="#bfc4ca" metalness={0.65} roughness={0.22} />
-        </mesh>
-        {[-0.0016, 0.0016].map((x) => (
-          <mesh key={x} position={[x, -0.003, 0]} rotation={[0, 0, 0]}>
-            <cylinderGeometry args={[0.00022, 0.00022, 0.008, 8]} />
-            <meshStandardMaterial color="#c9c9c9" metalness={0.85} roughness={0.2} />
-          </mesh>
-        ))}
-        <Html distanceFactor={0.08} style={{ pointerEvents: 'none' }}>
-          <div style={{ background: 'rgba(20,30,40,0.8)', color: '#d8ecff',
-                        padding: '1px 4px', borderRadius: 2, fontSize: 7,
-                        fontFamily: '"SF Mono", Menlo, monospace',
-                        transform: 'translate(-50%,-180%)' }}>
-            100nF
-          </div>
-        </Html>
-      </group>
-    )
-  }
   // Button: box with a highlight ring when clickable, brighter when pressed.
   // sim.role can mark a GLB/catalog part as clickable even when its primitive fallback is not "button".
   if (isButton || primitiveKind === 'button') {
@@ -374,20 +314,10 @@ function DefaultBody({ primitiveKind, onClick, selected, lit, pixels, isButton, 
     const emissiveInt = pressed ? 4 : (simActive ? 1.5 : 0.2)
     return (
       <group onClick={onClick}>
-        <mesh castShadow position={[0, 0.0004, 0]}>
-          <boxGeometry args={[0.007, 0.0012, 0.007]} />
-          <meshStandardMaterial color="#151515" roughness={0.58} />
+        <mesh castShadow position={[0, pressed ? 0.001 : 0.002, 0]}>
+          <boxGeometry args={[0.006, pressed ? 0.002 : 0.004, 0.006]} />
+          <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={emissiveInt} />
         </mesh>
-        <mesh castShadow position={[0, pressed ? 0.0015 : 0.0023, 0]}>
-          <boxGeometry args={[0.0052, pressed ? 0.0012 : 0.0024, 0.0052]} />
-          <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={emissiveInt} roughness={0.34} />
-        </mesh>
-        {[-1, 1].flatMap((sx) => [-1, 1].map((sz) => (
-          <mesh key={`${sx}:${sz}`} position={[sx * 0.0042, -0.0015, sz * 0.0028]}>
-            <boxGeometry args={[0.0028, 0.00045, 0.0007]} />
-            <meshStandardMaterial color="#c8c8c8" metalness={0.85} roughness={0.24} />
-          </mesh>
-        )))}
         {simActive && (
           <mesh position={[0, 0.003, 0]}>
             <ringGeometry args={[0.004, 0.005, 24]} />
@@ -690,9 +620,9 @@ function Nets({ violations }: { violations: Violation[] }) {
           const ca: [number, number, number] = [a.position[0], a.position[1] + lift, a.position[2]]
           const cb: [number, number, number] = [b.position[0], b.position[1] + lift, b.position[2]]
           segments.push(
-            <JumperWire key={`${net.id}-${i}`}
+            <CubicBezierLine key={`${net.id}-${i}`}
               start={a.position} midA={ca} midB={cb} end={b.position}
-              color={baseColor} radius={isError ? 0.00072 : 0.00052}
+              color={baseColor} lineWidth={isError ? 4 : 2.8}
               onContextMenu={(e: any) => {
                 e.stopPropagation()
                 if (window.confirm(`Delete connection between ${net.endpoints.join(' and ')}?`)) removeNet(net.id)
@@ -702,30 +632,6 @@ function Nets({ violations }: { violations: Violation[] }) {
         return segments
       })}
     </>
-  )
-}
-
-function JumperWire({ start, midA, midB, end, color, radius, onContextMenu }: {
-  start: [number, number, number]
-  midA: [number, number, number]
-  midB: [number, number, number]
-  end: [number, number, number]
-  color: string
-  radius: number
-  onContextMenu: (e: ThreeEvent<MouseEvent>) => void
-}) {
-  const curve = useMemo(() => new THREE.CubicBezierCurve3(
-    new THREE.Vector3(...start),
-    new THREE.Vector3(...midA),
-    new THREE.Vector3(...midB),
-    new THREE.Vector3(...end),
-  ), [start, midA, midB, end])
-
-  return (
-    <mesh castShadow receiveShadow onContextMenu={onContextMenu}>
-      <tubeGeometry args={[curve, 32, radius, 10, false]} />
-      <meshStandardMaterial color={color} roughness={0.38} metalness={0.02} />
-    </mesh>
   )
 }
 
