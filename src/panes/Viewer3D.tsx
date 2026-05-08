@@ -1,5 +1,5 @@
 import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber'
-import { OrbitControls, Grid, Environment, Html, CubicBezierLine, TransformControls, useGLTF } from '@react-three/drei'
+import { OrbitControls, Grid, Environment, Html, CubicBezierLine, TransformControls, useGLTF, ContactShadows } from '@react-three/drei'
 import { useStore } from '../store'
 import React, { Suspense, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import * as THREE from 'three'
@@ -74,23 +74,23 @@ function BoardMesh({ board }: { board: import('../project/component').BoardDef }
       {/* PCB body */}
       <mesh position={[cx, 0.005, cz]} castShadow receiveShadow>
         <boxGeometry args={[pcbW, 0.0016, pcbD]} />
-        <meshStandardMaterial color="#1f4f3a" roughness={0.6} />
+        <meshStandardMaterial color="#20614a" roughness={0.48} metalness={0.02} />
       </mesh>
       {/* USB connector stub */}
       <mesh position={[usbX, 0.009, cz]} castShadow>
         <boxGeometry args={[0.008, 0.006, 0.008]} />
-        <meshStandardMaterial color="#aaa" metalness={0.8} roughness={0.3} />
+        <meshStandardMaterial color="#b7bcc0" metalness={0.9} roughness={0.22} />
       </mesh>
       {/* Module shield can — approximate, centered on PCB */}
       <mesh position={[cx + pcbW * 0.1, 0.008, cz]} castShadow>
         <boxGeometry args={[pcbW * 0.38, 0.003, pcbD * 0.65]} />
-        <meshStandardMaterial color="#ddd" metalness={0.85} roughness={0.3} />
+        <meshStandardMaterial color="#d8dde0" metalness={0.85} roughness={0.24} />
       </mesh>
       {/* Pin header rails — one per unique z edge */}
       {uniqueZ.map((z) => (
         <mesh key={z} position={[cx, 0.0062, z]}>
           <boxGeometry args={[pcbW - margin, 0.002, 0.0025]} />
-          <meshStandardMaterial color="#0a0a0a" />
+          <meshStandardMaterial color="#111315" roughness={0.72} />
         </mesh>
       ))}
     </group>
@@ -140,8 +140,13 @@ function LoadedGlb({ url, scale = 1, lit, simActive }: {
   useEffect(() => {
     scene.traverse((child) => {
       if (child instanceof THREE.Mesh) {
+        child.castShadow = true
+        child.receiveShadow = true
+        if (Array.isArray(child.material)) child.material = child.material.map((mat) => mat.clone())
+        else child.material = child.material.clone()
         const mat = child.material as THREE.MeshStandardMaterial
         if (!mat) return
+        mat.roughness = Math.min(0.85, Math.max(0.18, mat.roughness ?? 0.5))
         if (lit) {
           mat.emissive = new THREE.Color('#ff2200')
           mat.emissiveIntensity = 1.5
@@ -257,12 +262,14 @@ function DefaultBody({ primitiveKind, onClick, selected, lit, pixels, isButton, 
         {lit && <pointLight position={[0, 0.002, 0]} intensity={0.02} distance={0.05} color="#ff4040" />}
         <mesh position={[0, 0, 0]} castShadow>
           <sphereGeometry args={[0.0025, 16, 12]} />
-          <meshStandardMaterial color="#ff1a1a" transparent opacity={0.65}
+          <meshPhysicalMaterial color="#ff1a1a" transparent opacity={0.72}
+                                roughness={0.16} transmission={0.2} thickness={0.002}
                                 emissive={emissive} emissiveIntensity={emissiveIntensity} />
         </mesh>
         <mesh position={[0, -0.0025, 0]}>
           <cylinderGeometry args={[0.0025, 0.0025, 0.001, 16]} />
-          <meshStandardMaterial color="#ff2222" transparent opacity={0.85}
+          <meshPhysicalMaterial color="#ff2222" transparent opacity={0.82}
+                                roughness={0.2} transmission={0.08} thickness={0.001}
                                 emissive={emissive} emissiveIntensity={emissiveIntensity * 0.5} />
         </mesh>
         <mesh position={[-0.0012, -0.005, 0]}>
@@ -615,7 +622,7 @@ function Nets({ violations }: { violations: Violation[] }) {
           segments.push(
             <CubicBezierLine key={`${net.id}-${i}`}
               start={a.position} midA={ca} midB={cb} end={b.position}
-              color={baseColor} lineWidth={isError ? 3 : 2}
+              color={baseColor} lineWidth={isError ? 4 : 2.8}
               onContextMenu={(e: any) => {
                 e.stopPropagation()
                 if (window.confirm(`Delete connection between ${net.endpoints.join(' and ')}?`)) removeNet(net.id)
@@ -764,14 +771,30 @@ export default function Viewer3D() {
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <Canvas shadows="variance" camera={{ position: [0.12, 0.1, 0.12], fov: 40, near: 0.001, far: 10 }}
-              style={{ background: '#F2F7F2' }}
+              dpr={[1, 2]}
+              gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
+              onCreated={({ gl, scene }) => {
+                gl.toneMapping = THREE.ACESFilmicToneMapping
+                gl.toneMappingExposure = 1.1
+                gl.outputColorSpace = THREE.SRGBColorSpace
+                scene.background = new THREE.Color('#eef3f0')
+              }}
+              style={{ background: '#eef3f0' }}
               onPointerMissed={() => select(null)}>
         <Suspense fallback={null}>
-          <ambientLight intensity={0.4} />
-          <directionalLight position={[0.2, 0.3, 0.2]} intensity={1.2} castShadow />
-          <Environment preset="city" />
+          <ambientLight intensity={0.18} />
+          <hemisphereLight args={['#ffffff', '#819083', 0.55]} />
+          <directionalLight position={[0.18, 0.34, 0.18]} intensity={1.45} castShadow
+                            shadow-mapSize={[2048, 2048]}
+                            shadow-bias={-0.00008}
+                            shadow-camera-left={-0.16}
+                            shadow-camera-right={0.16}
+                            shadow-camera-top={0.16}
+                            shadow-camera-bottom={-0.16} />
+          <directionalLight position={[-0.16, 0.12, -0.18]} intensity={0.28} />
+          <Environment preset="studio" environmentIntensity={0.55} />
           <Grid args={[1, 1]} cellSize={0.005} sectionSize={0.05}
-                cellColor="#333" sectionColor="#555" fadeDistance={0.5} infiniteGrid />
+                cellColor="#9aa69d" sectionColor="#5f6b63" fadeDistance={0.42} fadeStrength={1.4} infiniteGrid />
           <BoardWithPins />
           {project.components.map((c) => (
             <ComponentWithPins key={c.instance} c={c}
@@ -780,6 +803,8 @@ export default function Viewer3D() {
                                simActive={simStates.active.has(c.instance)} />
           ))}
           <Nets violations={[...drc.errors, ...drc.warnings]} />
+          <ContactShadows position={[0, -0.001, 0]} opacity={0.26} scale={0.28}
+                          blur={1.8} far={0.08} resolution={1024} color="#1b241f" />
           <OrbitControls makeDefault target={[0, 0, 0]} />
         </Suspense>
       </Canvas>
