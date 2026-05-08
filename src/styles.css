@@ -5,6 +5,10 @@
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; background: #1a1a1a; color: #ddd; }
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed !important;
+}
 
 .app {
   display: grid;
