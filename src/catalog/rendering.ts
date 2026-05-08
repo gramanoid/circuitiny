@@ -4,6 +4,7 @@ import { resolveSchematicSymbol } from '../project/component'
 export type PrimitiveRenderKind =
   | 'led'
   | 'resistor'
+  | 'capacitor'
   | 'button'
   | 'display'
   | 'sensor'
@@ -26,6 +27,7 @@ export interface CatalogRenderInfo {
 const PRIMITIVE_BY_SYMBOL: Record<SchematicSymbol, PrimitiveRenderKind> = {
   led: 'led',
   resistor: 'resistor',
+  capacitor: 'capacitor',
   button: 'button',
   display: 'display',
   sensor: 'sensor',
@@ -35,7 +37,6 @@ const PRIMITIVE_BY_SYMBOL: Record<SchematicSymbol, PrimitiveRenderKind> = {
   motor: 'motor',
   microphone: 'microphone',
   ledstrip: 'ledstrip',
-  capacitor: 'generic-block',
   ic: 'generic-block',
   'generic-rect': 'generic-block',
 }
@@ -46,6 +47,7 @@ export const PRIMITIVE_ID_PATTERNS: Array<{ kind: PrimitiveRenderKind; patterns:
   { kind: 'ledstrip', patterns: [/(^|[-_])(ws2812|neopixel|ledstrip|rgb[-_]?strip|rgbw[-_]?strip)([-_]|$)/] },
   { kind: 'led', patterns: [/(^|[-_])led([-_]|$)/] },
   { kind: 'resistor', patterns: [/(^|[-_])resistor([-_]|$)/] },
+  { kind: 'capacitor', patterns: [/(^|[-_])(capacitor|cap)([-_]|$)/] },
   { kind: 'button', patterns: [/(^|[-_])(button|push[-_]?button|tactile[-_]?button|btn)([-_]|$)/] },
   { kind: 'sensor', patterns: [/(^|[-_])(soil|moisture|pir)([-_]|$)/, /(^|[-_])dht\d*([-_]|$)/] },
   { kind: 'display', patterns: [/(^|[-_])(oled|display)([-_]|$)/] },
