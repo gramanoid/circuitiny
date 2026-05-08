@@ -10,6 +10,11 @@ import { getRecipe, getRecipeStep } from '../learning/recipes'
 import { summarizeViolationsForLearner } from '../learning/drcExplanations'
 import { recommendParts } from '../learning/partRecommendations'
 import type { ComponentDef, SchematicSymbol } from '../project/component'
+import { TEMPLATES } from '../templates'
+import { candidatesFromDescription, parsePhotoCandidates } from '../parts/photoAnalysis'
+import { lookupPartKnowledge, lookupPartKnowledgeWithWeb } from '../parts/retrieval'
+import { recommendProjectsFromInventory } from '../parts/recommendations'
+import type { ExaSearchResult, InventoryItem, PartKnowledgeRecord, PhotoCandidate, ProjectRecommendation } from '../parts/types'
 
 type PartRecommendation = ReturnType<typeof recommendParts>[number]
 const DRAFT_PIN_HORIZONTAL_SPACING_M = 0.003
@@ -410,6 +415,83 @@ export const tools: ToolDef[] = [
         required: ['goal', 'recommendation_id', 'approved']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'analyze_parts_photo',
+      description: 'Analyze a parts photo result or plain description into unconfirmed candidate parts. Does not persist inventory. Use photo_path only when the learner selected a local photo in the app.',
+      parameters: {
+        type: 'object',
+        properties: {
+          photo_path: { type: 'string', description: 'Local photo path selected by the learner in Parts Lab.' },
+          codex_result: { type: 'string', description: 'Raw JSON/text from Codex vision analysis.' },
+          description: { type: 'string', description: 'Plain-English visible parts, file name, or learner notes.' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'match_parts_database',
+      description: 'Match a part name against local catalog first, then curated beginner parts. Returns confidence, pins, companions, render fallback, and safety notes.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Part name or marking, e.g. "ssd1306 oled" or "soil moisture sensor".' }
+        },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_parts_web',
+      description: 'Use Exa web search for an unknown part, then return low-trust metadata and source links. Requires EXA_API_KEY in the app environment.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Part name, chip marking, module name, or datasheet search phrase.' }
+        },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'recommend_projects_from_inventory',
+      description: 'Recommend beginner-friendly projects from confirmed parts. Pass only parts the learner confirmed they have.',
+      parameters: {
+        type: 'object',
+        properties: {
+          parts: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Confirmed part names or catalog ids.'
+          },
+          novelty: { type: 'string', enum: ['normal', 'higher'], description: 'Use "higher" when the learner asks for something cooler or more interesting.' }
+        },
+        required: ['parts']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_recipe_from_project',
+      description: 'Create a project from a recommended template after learner approval. Runs DRC after loading. Only supports recommendations with a built-in template.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string', description: 'Recommendation id, e.g. "blink-led" or "button-led".' },
+          approved: { type: 'boolean', description: 'Must be true only after learner approval.' }
+        },
+        required: ['project_id', 'approved']
+      }
+    }
   }
 ]
 
@@ -428,6 +510,26 @@ export interface GetProjectResult {
 export interface RecommendPartsResult {
   goal: string
   recommendations: PartRecommendation[]
+}
+
+export interface AnalyzePartsPhotoResult {
+  candidates: PhotoCandidate[]
+}
+
+export interface MatchPartsDatabaseResult {
+  query: string
+  part: PartKnowledgeRecord
+}
+
+export interface SearchPartsWebResult {
+  query: string
+  results: ExaSearchResult[]
+  part: PartKnowledgeRecord
+}
+
+export interface RecommendProjectsResult {
+  parts: PartKnowledgeRecord[]
+  recommendations: ProjectRecommendation[]
 }
 
 export interface CreateDraftPartResult {
@@ -1104,6 +1206,108 @@ async function handleCreateDraftPart(args: Record<string, any>, ctx?: ExecContex
   return { ok: true, data: { componentId: component.id, savedTo: dir, catalogMeta: component.catalogMeta } }
 }
 
+async function handleAnalyzePartsPhoto(args: Record<string, any>): Promise<ToolResult> {
+  const photoPath = String(args.photo_path ?? '').trim()
+  let sourceText = String(args.codex_result ?? '').trim()
+  const description = String(args.description ?? '').trim()
+
+  if (photoPath) {
+    const api = typeof window !== 'undefined' ? window.espAI : undefined
+    if (!api?.analyzePartsPhoto) {
+      return { ok: false, error: 'Photo analysis is only available inside the Electron app.' }
+    }
+    const result = await api.analyzePartsPhoto({ path: photoPath, notes: description, reasoningEffort: 'medium' })
+    if (!result.ok) return { ok: false, error: result.error ?? 'Photo analysis failed.' }
+    sourceText = result.text ?? ''
+  }
+
+  if (!sourceText && !description) {
+    return { ok: false, error: 'Provide photo_path, codex_result, or description. Candidates are unconfirmed until the learner approves them.' }
+  }
+
+  const candidates = sourceText ? parsePhotoCandidates(sourceText) : candidatesFromDescription(description)
+  return {
+    ok: true,
+    data: {
+      candidates,
+      nextStep: 'Ask the learner which candidates they actually have before creating inventory or projects.',
+    },
+  }
+}
+
+async function handleMatchPartsDatabase(args: Record<string, any>): Promise<ToolResult> {
+  const query = String(args.query ?? '').trim()
+  if (!query) return { ok: false, error: 'match_parts_database requires query.' }
+  const part = lookupPartKnowledge(query)
+  return { ok: true, data: { query, part } }
+}
+
+async function handleSearchPartsWeb(args: Record<string, any>): Promise<ToolResult> {
+  const query = String(args.query ?? '').trim()
+  if (!query) return { ok: false, error: 'search_parts_web requires query.' }
+  const api = typeof window !== 'undefined' ? window.espAI : undefined
+  if (!api?.exaPartSearch) {
+    return { ok: false, error: 'Exa web search is only available inside the Electron app.' }
+  }
+  const response = await api.exaPartSearch(query)
+  if (!response.ok) return { ok: false, error: response.error ?? 'Exa web search failed.' }
+  const results = response.results ?? []
+  const part = await lookupPartKnowledgeWithWeb(query, async () => results)
+  return {
+    ok: true,
+    data: {
+      query,
+      results,
+      part,
+      reviewRequired: true,
+      nextStep: 'Treat web-derived details as draft metadata. Ask for confirmation before adding a part or creating a project.',
+    },
+  }
+}
+
+async function handleRecommendProjectsFromInventory(args: Record<string, any>): Promise<ToolResult> {
+  const rawParts = Array.isArray(args.parts) ? args.parts : []
+  const partNames = rawParts.map((part) => String(part ?? '').trim()).filter(Boolean)
+  if (partNames.length === 0) {
+    return { ok: false, error: 'recommend_projects_from_inventory requires at least one confirmed part name.' }
+  }
+  const parts = Array.from(new Map(partNames.map((part) => {
+    const knowledge = lookupPartKnowledge(part)
+    return [knowledge.id, knowledge] as const
+  })).values())
+  const novelty = args.novelty === 'higher' ? 'higher' : 'normal'
+  const recommendations = recommendProjectsFromInventory(parts, { novelty }).slice(0, 5)
+  return { ok: true, data: { parts, recommendations } }
+}
+
+async function handleCreateRecipeFromProject(args: Record<string, any>): Promise<ToolResult> {
+  if (args.approved !== true) {
+    return { ok: false, error: 'create_recipe_from_project requires approved: true after explicit learner approval.' }
+  }
+  const projectId = String(args.project_id ?? '').trim()
+  if (!projectId) return { ok: false, error: 'project_id is required.' }
+  const template = TEMPLATES.find((entry) => entry.id === projectId)
+  if (!template) {
+    return {
+      ok: false,
+      error: `No built-in template exists for "${projectId}" yet. Explain the missing parts and ask before drafting a custom project.`,
+    }
+  }
+  const store = useStore.getState()
+  store.loadProject(template.project)
+  useStore.getState().startRecipe(template.recipe.id)
+  const drc = runDrc(useStore.getState().project)
+  return {
+    ok: true,
+    data: {
+      projectId,
+      templateTitle: template.title,
+      drc: { errors: drc.errors.length, warnings: drc.warnings.length },
+      nextStep: 'Walk the learner through the active recipe and resolve DRC warnings before build or flash.',
+    },
+  }
+}
+
 function draftComponentFromRecommendation(rec: ReturnType<typeof recommendParts>[number]): ComponentDef {
   const pinReviewNotes: string[] = []
   const pins = rec.importantPins.map((p, i) => ({
@@ -1137,6 +1341,7 @@ function draftComponentFromRecommendation(rec: ReturnType<typeof recommendParts>
       trust: 'ai-draft',
       confidence: rec.confidence,
       sourceUrls: rec.sourceLinks,
+      retrievedAt: new Date().toISOString(),
       renderStrategy: rec.renderStrategy,
       reviewNotes,
     },
@@ -1200,6 +1405,11 @@ const HANDLERS: Record<string, Handler> = {
   plan_circuit:     (args) => handlePlanCircuit(args),
   recommend_parts:  (args, ctx) => handleRecommendParts(args, ctx),
   create_draft_part:(args, ctx) => handleCreateDraftPart(args, ctx),
+  analyze_parts_photo: (args) => handleAnalyzePartsPhoto(args),
+  match_parts_database: (args) => handleMatchPartsDatabase(args),
+  search_parts_web: (args) => handleSearchPartsWeb(args),
+  recommend_projects_from_inventory: (args) => handleRecommendProjectsFromInventory(args),
+  create_recipe_from_project: (args) => handleCreateRecipeFromProject(args),
 }
 
 async function executeInternal(

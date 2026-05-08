@@ -18,6 +18,7 @@ function isValidCatalogMeta(meta: unknown): meta is CatalogMeta {
   if (m.confidence !== undefined && !CATALOG_CONFIDENCE.includes(m.confidence)) return false
   if (m.renderStrategy !== undefined && !CATALOG_RENDER_STRATEGY.includes(m.renderStrategy)) return false
   if (m.sourceUrls !== undefined && !isStringArray(m.sourceUrls)) return false
+  if (m.retrievedAt !== undefined && typeof m.retrievedAt !== 'string') return false
   if (m.reviewNotes !== undefined && !isStringArray(m.reviewNotes)) return false
   return true
 }

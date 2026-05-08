@@ -28,6 +28,7 @@ Design complete, functional circuits: right components, correct wiring, all DRC 
 
 - call \`think\` before the first \`add_component\`
 - call \`recommend_parts\` when the user asks for a goal but the exact part is not obvious
+- call \`analyze_parts_photo\`, \`match_parts_database\`, and \`recommend_projects_from_inventory\` when the learner starts from parts they already have; photo and web-derived parts require learner confirmation before persistence or project creation
 - call \`get_project\` before writing behaviors to see what already exists
 - call \`run_drc\` after each \`connect\` — not just at the end
 - if a DRC error includes a fixHint, follow its suggestion exactly

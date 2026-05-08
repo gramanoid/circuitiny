@@ -2,6 +2,8 @@ export {}
 
 export interface IdfLogEvent { runId: string; stream: 'stdout' | 'stderr'; text: string }
 export interface IdfExitEvent { runId: string; code: number | null; signal: string | null }
+export interface PartsPhoto { path: string; name: string; dataUrl: string }
+export interface ExaPartSearchResult { title: string; url: string; highlights: string[]; publishedDate?: string; retrievedAt?: string }
 
 declare global {
   interface Window {
@@ -29,6 +31,9 @@ declare global {
       claudeCodeChat: (opts: { prompt: string; systemAppend: string; model: string }) => Promise<{ ok: boolean; text?: string; error?: string }>
       codexChat: (opts: { runId?: string; prompt: string; model: string; reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'; includeScreenshot?: boolean }) => Promise<{ ok: boolean; text?: string; error?: string }>
       codexStop: (runId: string) => Promise<{ ok: boolean; reason?: string }>
+      pickPartsPhoto: () => Promise<PartsPhoto | null>
+      analyzePartsPhoto: (opts: { path: string; notes?: string; model?: string; reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' }) => Promise<{ ok: boolean; text?: string; error?: string }>
+      exaPartSearch: (query: string) => Promise<{ ok: boolean; results?: ExaPartSearchResult[]; error?: string }>
     }
   }
 }

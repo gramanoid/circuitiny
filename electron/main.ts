@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { join, dirname, delimiter, resolve, relative, isAbsolute } from 'path'
+import { join, dirname, delimiter, resolve, relative, isAbsolute, basename, extname } from 'path'
 import { fileURLToPath } from 'url'
 import { readFile, writeFile, mkdir, readdir, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
@@ -13,6 +13,10 @@ const ICON_PATH = join(__dirname, '../../resources/icon.png')
 const CIRCUITINY_HOME = join(homedir(), '.circuitiny')
 const CATALOG_ROOT = join(CIRCUITINY_HOME, 'catalog')
 const PROJECTS_ROOT = join(homedir(), 'circuitiny', 'projects')
+const PARTS_PHOTO_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif']
+const PARTS_PHOTO_MAX_BYTES = 16 * 1024 * 1024
+type ExaCachedResult = { title: string; url: string; highlights: string[]; publishedDate?: string; retrievedAt: string }
+const exaPartSearchCache = new Map<string, { expiresAt: number; results: ExaCachedResult[] }>()
 // Resolution order: explicit override → IDF's own export.sh env var → standard install location
 const IDF_PATH = process.env.CIRCUITINY_IDF_PATH ?? process.env.IDF_PATH ?? join(homedir(), 'esp', 'esp-idf')
 
@@ -576,6 +580,200 @@ ipcMain.handle('codexStop', async (_e, runId: string) => {
   if (child.exitCode != null || child.signalCode != null) clearTimeout(killTimeout)
   return { ok: true }
 })
+
+// ---- Parts Lab: photo intake + web lookup ----
+
+ipcMain.handle('pickPartsPhoto', async () => {
+  const r = await dialog.showOpenDialog({
+    title: 'Select a parts photo',
+    filters: [{ name: 'Image', extensions: PARTS_PHOTO_EXTENSIONS }],
+    properties: ['openFile'],
+  })
+  if (r.canceled || !r.filePaths[0]) return null
+  const photoPath = r.filePaths[0]
+  validatePartsPhotoPath(photoPath)
+  const data = await readFile(photoPath)
+  if (data.byteLength > PARTS_PHOTO_MAX_BYTES) {
+    throw new Error('Photo is too large for transient analysis. Please choose an image under 16 MB.')
+  }
+  const mime = mimeForImagePath(photoPath)
+  return {
+    path: photoPath,
+    name: basename(photoPath),
+    dataUrl: `data:${mime};base64,${data.toString('base64')}`,
+  }
+})
+
+ipcMain.handle('analyzePartsPhoto', async (_e, opts: {
+  path: string
+  notes?: string
+  model?: string
+  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+}): Promise<{ ok: boolean; text?: string; error?: string }> => {
+  const photoPath = String(opts.path ?? '')
+  try {
+    validatePartsPhotoPath(photoPath)
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+  const prompt = [
+    'You are helping a beginner identify electronics parts in a photo for Circuitiny.',
+    'Return ONLY JSON in this shape:',
+    '{"candidates":[{"label":"part name","quantity":1,"confidence":"high|medium|low","evidence":"short visual clue","safetyNotes":["short caution"]}]}',
+    'Prefer common ESP32 beginner parts: LEDs, resistors, buttons, OLED displays, PIR sensors, servos, moisture sensors, jumper wires, and modules.',
+    'If a part is uncertain, set confidence to low and explain what to verify. Do not invent pinouts.',
+    opts.notes ? `Learner notes: ${String(opts.notes).slice(0, 1000)}` : '',
+  ].filter(Boolean).join('\n')
+  return runCodexExec({
+    prompt,
+    model: opts.model,
+    reasoningEffort: opts.reasoningEffort,
+    imagePaths: [photoPath],
+    cwd: app.getPath('home'),
+  })
+})
+
+ipcMain.handle('exaPartSearch', async (_e, query: string): Promise<{
+  ok: boolean
+  results?: Array<{ title: string; url: string; highlights: string[]; publishedDate?: string }>
+  error?: string
+}> => {
+  const normalized = String(query ?? '').replace(/\s+/g, ' ').trim()
+  if (!normalized) return { ok: false, error: 'Search query is required.' }
+  const apiKey = process.env.EXA_API_KEY?.trim()
+  if (!apiKey) return { ok: false, error: 'EXA_API_KEY is not configured in the app environment.' }
+  const cacheKey = normalized.toLowerCase()
+  const cached = exaPartSearchCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return { ok: true, results: cached.results }
+  try {
+    const response = await fetch('https://api.exa.ai/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      },
+      body: JSON.stringify({
+        query: `${normalized} electronics module ESP32 datasheet pinout beginner safe voltage`,
+        type: 'auto',
+        numResults: 5,
+        contents: {
+          highlights: { maxCharacters: 1200 },
+          maxAgeHours: 168,
+        },
+      }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      const message = typeof data?.error === 'string' ? data.error : `Exa search failed with HTTP ${response.status}`
+      return { ok: false, error: message }
+    }
+    const results = Array.isArray(data?.results) ? data.results : []
+    const normalizedResults: ExaCachedResult[] = results.map((item: any) => ({
+        title: String(item?.title ?? item?.url ?? 'Untitled result'),
+        url: String(item?.url ?? ''),
+        highlights: Array.isArray(item?.highlights)
+          ? item.highlights.filter((h: unknown): h is string => typeof h === 'string').slice(0, 3)
+          : [],
+        ...(typeof item?.publishedDate === 'string' ? { publishedDate: item.publishedDate } : {}),
+        retrievedAt: new Date().toISOString(),
+      })).filter((item: { url: string }) => item.url).slice(0, 5)
+    exaPartSearchCache.set(cacheKey, { expiresAt: Date.now() + 24 * 60 * 60 * 1000, results: normalizedResults })
+    return { ok: true, results: normalizedResults }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+function validatePartsPhotoPath(photoPath: string) {
+  if (!photoPath) throw new Error('Photo path is required.')
+  if (!existsSync(photoPath)) throw new Error(`Photo not found: ${photoPath}`)
+  const ext = extname(photoPath).replace(/^\./, '').toLowerCase()
+  if (!PARTS_PHOTO_EXTENSIONS.includes(ext)) {
+    throw new Error(`Unsupported photo type ".${ext}". Use ${PARTS_PHOTO_EXTENSIONS.join(', ')}.`)
+  }
+}
+
+function mimeForImagePath(photoPath: string): string {
+  const ext = extname(photoPath).replace(/^\./, '').toLowerCase()
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg'
+  if (ext === 'png') return 'image/png'
+  if (ext === 'webp') return 'image/webp'
+  if (ext === 'heic') return 'image/heic'
+  if (ext === 'heif') return 'image/heif'
+  return 'application/octet-stream'
+}
+
+function runCodexExec(opts: {
+  prompt: string
+  model?: string
+  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  imagePaths?: string[]
+  cwd: string
+}): Promise<{ ok: boolean; text?: string; error?: string }> {
+  const PATH = [...CLI_EXTRA_PATHS, process.env.PATH ?? ''].join(delimiter)
+  const binary = resolveCliBinary('codex', CLI_EXTRA_PATHS)
+  const outputPath = join(app.getPath('temp'), `circuitiny-codex-${randomUUID()}.txt`)
+  const model = defaultCodexCliModel(opts.model)
+  const reasoningEffort = isCodexReasoningEffort(opts.reasoningEffort) ? opts.reasoningEffort : 'medium'
+
+  return new Promise((resolve) => {
+    const args = [
+      'exec',
+      '--ephemeral',
+      '--skip-git-repo-check',
+      '--sandbox', 'read-only',
+      '--model', model,
+      '-c', `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`,
+      ...(opts.imagePaths ?? []).flatMap((imagePath) => ['--image', imagePath]),
+      '--output-last-message', outputPath,
+      '-',
+    ]
+    const child = spawn(binary, args, {
+      env: { ...process.env, PATH },
+      cwd: opts.cwd,
+    }) as ChildProcess
+
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    let forceKillTimer: ReturnType<typeof setTimeout> | null = null
+
+    async function finish(result: { ok: boolean; text?: string; error?: string }) {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      if (forceKillTimer) clearTimeout(forceKillTimer)
+      await unlink(outputPath).catch(() => {})
+      resolve(result)
+    }
+
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM')
+      forceKillTimer = setTimeout(() => {
+        if (child.exitCode == null && child.signalCode == null) child.kill('SIGKILL')
+      }, 1500)
+      finish({ ok: false, error: `Codex CLI timed out after ${Math.round(CODEX_CLI_TIMEOUT_MS / 1000)} seconds` }).catch((err) => {
+        console.warn('Failed to finish timed-out Codex run', err)
+      })
+    }, CODEX_CLI_TIMEOUT_MS)
+
+    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf8') })
+    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString('utf8') })
+    child.stdin?.write(opts.prompt)
+    child.stdin?.end()
+    child.on('exit', async (code) => {
+      const text = await readFile(outputPath, 'utf8').catch(() => stdout)
+      if (code === 0) {
+        await finish({ ok: true, text })
+      } else {
+        await finish({ ok: false, error: stderr.trim() || stdout.trim() || `codex exited with code ${code}` })
+      }
+    })
+    child.on('error', async (err) => {
+      await finish({ ok: false, error: err.message })
+    })
+  })
+}
 
 // ---- Project save / open ----
 

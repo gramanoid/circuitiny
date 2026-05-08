@@ -6,6 +6,7 @@ import CodeBuildTabs from './panes/CodeBuildTabs'
 import ChatPane from './panes/ChatPane'
 import CatalogEditor3D from './panes/CatalogEditor3D'
 import CatalogEditorPanel from './panes/CatalogEditorPanel'
+import PartsLabPanel from './panes/PartsLabPanel'
 import Palette from './panes/Palette'
 import BoardPicker from './panes/BoardPicker'
 import LearningPanel from './panes/LearningPanel'
@@ -67,6 +68,7 @@ export default function App() {
         <strong style={{ fontSize: 12, marginRight: 12 }}>Circuitiny</strong>
         <button onClick={() => setMode('project')} style={tabStyle(mode === 'project')}>Project</button>
         <button onClick={() => setMode('catalog-editor')} style={tabStyle(mode === 'catalog-editor')}>Catalog Editor</button>
+        <button onClick={() => setMode('parts-lab')} style={tabStyle(mode === 'parts-lab')}>Parts Lab</button>
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 11, color: dirty ? '#886633' : '#555', marginRight: 4 }}
               title={savedPath ?? 'unsaved'}>
@@ -81,7 +83,7 @@ export default function App() {
         <button onClick={openBoardPicker} style={newProjectStyle}>+ New Project</button>
       </nav>
       <div style={{ flex: 1, minHeight: 0 }}>
-        {mode === 'project' ? <ProjectMode /> : <CatalogEditorMode />}
+        {mode === 'project' ? <ProjectMode /> : mode === 'catalog-editor' ? <CatalogEditorMode /> : <PartsLabMode />}
       </div>
       {showBoardPicker && <BoardPicker />}
     </div>
@@ -136,6 +138,20 @@ function CatalogEditorMode() {
       <ResizeH />
       <Panel defaultSize={30} minSize={15} maxSize={50}>
         <PaneFrame title="Pins"><CatalogEditorPanel /></PaneFrame>
+      </Panel>
+    </PanelGroup>
+  )
+}
+
+function PartsLabMode() {
+  return (
+    <PanelGroup direction="horizontal" autoSaveId="circuitiny:parts-lab">
+      <Panel defaultSize={72} minSize={45}>
+        <PaneFrame title="Parts Lab" noPad><PartsLabPanel /></PaneFrame>
+      </Panel>
+      <ResizeH />
+      <Panel defaultSize={28} minSize={18} maxSize={42}>
+        <PaneFrame title="Agent" noPad><ChatPane /></PaneFrame>
       </Panel>
     </PanelGroup>
   )

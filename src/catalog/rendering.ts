@@ -106,6 +106,7 @@ export function promoteCatalogMeta(meta: CatalogMeta | undefined, hasGlb: boolea
     trust: 'reviewed',
     confidence: meta?.confidence === 'low' ? 'medium' : (meta?.confidence ?? 'medium'),
     sourceUrls: meta?.sourceUrls ?? [],
+    retrievedAt: meta?.retrievedAt,
     renderStrategy,
     reviewNotes: Array.from(notes),
   }

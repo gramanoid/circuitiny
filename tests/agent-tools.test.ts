@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { execTool, makeExecContext, type CreateDraftPartResult, type GetProjectResult, type RecommendPartsResult, type RunDrcResult } from '../src/agent/tools'
+import {
+  execTool,
+  makeExecContext,
+  type AnalyzePartsPhotoResult,
+  type CreateDraftPartResult,
+  type GetProjectResult,
+  type MatchPartsDatabaseResult,
+  type RecommendPartsResult,
+  type RecommendProjectsResult,
+  type RunDrcResult,
+} from '../src/agent/tools'
 import { useStore } from '../src/store'
 import { TEMPLATES } from '../src/templates'
 import { emptyProject } from '../src/project/schema'
@@ -42,6 +52,54 @@ describe('agent tools for beginner guidance', () => {
       expect(data.recommendations[0].source).toBe('draft-suggestion')
       expect(data.recommendations[0].reviewRequired).toBe(true)
     }
+  })
+
+  it('analyzes part descriptions into unconfirmed candidates', async () => {
+    const result = await execTool('analyze_parts_photo', { description: 'a red LED and a 220 ohm resistor' })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const data = result.data as AnalyzePartsPhotoResult
+      expect(data.candidates.map((candidate) => candidate.label)).toContain('LED 5mm Red')
+      expect(data.candidates.every((candidate) => candidate.status === 'candidate')).toBe(true)
+    }
+  })
+
+  it('matches the parts database without persisting anything', async () => {
+    const result = await execTool('match_parts_database', { query: 'ssd1306 oled' })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const data = result.data as MatchPartsDatabaseResult
+      expect(data.part.id).toBe('ssd1306-oled-i2c')
+      expect(data.part.reviewRequired).toBe(true)
+    }
+  })
+
+  it('recommends projects from confirmed inventory parts', async () => {
+    const result = await execTool('recommend_projects_from_inventory', {
+      parts: ['led-5mm-red', 'resistor-220r'],
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const data = result.data as RecommendProjectsResult
+      expect(data.recommendations[0].id).toBe('blink-led')
+      expect(data.recommendations[0].fit).toBe('build-now')
+    }
+  })
+
+  it('requires approval before creating a recipe project from recommendations', async () => {
+    const denied = await execTool('create_recipe_from_project', {
+      project_id: 'blink-led',
+      approved: false,
+    })
+    expect(denied.ok).toBe(false)
+
+    const created = await execTool('create_recipe_from_project', {
+      project_id: 'blink-led',
+      approved: true,
+    })
+    expect(created.ok).toBe(true)
+    expect(useStore.getState().project.name).toBe('Blink LED')
+    expect(useStore.getState().activeRecipeId).toBe('blink-led')
   })
 
   it('requires approval before creating an AI draft part', async () => {

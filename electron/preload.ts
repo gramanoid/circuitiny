@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 export interface IdfLogEvent { runId: string; stream: 'stdout' | 'stderr'; text: string }
 export interface IdfExitEvent { runId: string; code: number | null; signal: string | null }
+export interface PartsPhoto { path: string; name: string; dataUrl: string }
+export interface ExaPartSearchResult { title: string; url: string; highlights: string[]; publishedDate?: string; retrievedAt?: string }
 
 const api = {
   pickGlb: (): Promise<{ path: string; data: Uint8Array } | null> =>
@@ -74,6 +76,17 @@ const api = {
     ipcRenderer.invoke('codexChat', opts),
   codexStop: (runId: string): Promise<{ ok: boolean; reason?: string }> =>
     ipcRenderer.invoke('codexStop', runId),
+  pickPartsPhoto: (): Promise<PartsPhoto | null> =>
+    ipcRenderer.invoke('pickPartsPhoto'),
+  analyzePartsPhoto: (opts: {
+    path: string
+    notes?: string
+    model?: string
+    reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  }): Promise<{ ok: boolean; text?: string; error?: string }> =>
+    ipcRenderer.invoke('analyzePartsPhoto', opts),
+  exaPartSearch: (query: string): Promise<{ ok: boolean; results?: ExaPartSearchResult[]; error?: string }> =>
+    ipcRenderer.invoke('exaPartSearch', query),
 }
 
 contextBridge.exposeInMainWorld('espAI', api)

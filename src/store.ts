@@ -6,7 +6,7 @@ import type { CatalogMeta } from './project/component'
 import { getRecipe } from './learning/recipes'
 import type { LearningRecipe } from './learning/types'
 
-export type Mode = 'project' | 'catalog-editor'
+export type Mode = 'project' | 'catalog-editor' | 'parts-lab'
 
 export interface DraftPin {
   id: string

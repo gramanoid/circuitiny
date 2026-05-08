@@ -79,6 +79,7 @@ export interface CatalogMeta {
   trust: CatalogTrustState
   confidence?: 'high' | 'medium' | 'low'
   sourceUrls?: string[]
+  retrievedAt?: string
   renderStrategy?: CatalogRenderStrategy
   reviewNotes?: string[]
 }
