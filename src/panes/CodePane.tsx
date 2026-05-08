@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { generate } from '../codegen/generate'
+import { getCheckpoint, getRecipe, getRecipeStep } from '../learning/recipes'
 
 type FileKey = keyof ReturnType<typeof generate>['files']
 
@@ -10,8 +11,15 @@ const EDITABLE: FileKey[] = ['main/app_main.c']
 export default function CodePane() {
   const project = useStore((s) => s.project)
   const setCustomCode = useStore((s) => s.setCustomCode)
+  const activeRecipeId = useStore((s) => s.activeRecipeId)
+  const recipeStepIndex = useStore((s) => s.recipeStepIndex)
   const [active, setActive] = useState<FileKey>('main/app_main.c')
   const { files, ir } = useMemo(() => generate(project), [project])
+  const { recipe, recipeStep, checkpoint } = useMemo(() => {
+    const recipe = getRecipe(activeRecipeId)
+    const recipeStep = getRecipeStep(activeRecipeId, recipeStepIndex)
+    return { recipe, recipeStep, checkpoint: getCheckpoint(recipe, recipeStep?.checkpointId) }
+  }, [activeRecipeId, recipeStepIndex])
 
   const customCode = project.customCode ?? {}
   const isCustom = active in customCode
@@ -59,6 +67,22 @@ export default function CodePane() {
           </span>
         </div>
       </div>
+      {recipe && (
+        <div style={{
+          padding: '6px 10px',
+          borderBottom: '1px solid #1f2b38',
+          background: '#0e1720',
+          color: '#9ecbff',
+          fontSize: 10,
+          lineHeight: 1.4,
+        }}>
+          <b>Beginner code note</b>
+          {checkpoint?.behaviorId
+            ? <>: behavior <code>{checkpoint.behaviorId}</code> is generated from the recipe step. Look for GPIO setup, timer/edge handling, and the action that changes the output.</>
+            : <>: generated ESP-IDF files come from the current circuit, nets, and behaviors.</>
+          }
+        </div>
+      )}
       {isEditable
         ? <textarea
             value={activeContent}

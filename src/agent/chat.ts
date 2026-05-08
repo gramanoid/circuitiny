@@ -5,6 +5,7 @@ import { chatAnthropic } from './anthropic'
 import { chatOpenAI } from './openai'
 import { chat as chatOllama } from './ollama'
 import { chatClaudeCode } from './claudecode'
+import { chatCodexCli } from './codexcli'
 import { buildExpertPrompt } from './expertPrompt'
 
 export const SYSTEM = `You are an ESP32 design copilot for hobbyists. The user has a 3D board viewer.
@@ -88,6 +89,9 @@ export async function chat(
       break
     case 'claudecode':
       await chatClaudeCode(conv, effectiveCfg, cb)
+      break
+    case 'codexcli':
+      await chatCodexCli(conv, effectiveCfg, cb)
       break
     case 'ollama':
     default:

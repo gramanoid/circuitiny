@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useStore } from '../store'
 import { catalog } from '../catalog'
 import type { ComponentDef } from '../project/component'
 import { renderThumbnail } from '../catalog/thumbnails'
+import { catalogStatusLabel, resolveCatalogRender, type PrimitiveRenderKind } from '../catalog/rendering'
 
 // ── Family grouping ────────────────────────────────────────────────────────────
 
@@ -55,13 +56,17 @@ function groupByFamily(items: ComponentDef[]): Family[] {
 const EXPAND_W = 200
 const EXPAND_H = 150
 
-function Thumb({ componentId, w, h }: { componentId: string; w: number; h: number }) {
+function Thumb({ component, w, h }: { component: ComponentDef; w: number; h: number }) {
   const [src, setSrc] = useState<string | null>(null)
   const [hoverRect, setHoverRect] = useState<DOMRect | null>(null)
-  const url = catalog.getGlbUrl(componentId)
+  const url = catalog.getGlbUrl(component.id)
+  const renderInfo = resolveCatalogRender(component, !!url)
 
   useEffect(() => {
-    if (!url) return
+    if (!url) {
+      setSrc(null)
+      return
+    }
     let alive = true
     renderThumbnail(url).then((d) => { if (alive) setSrc(d) }).catch(() => {})
     return () => { alive = false }
@@ -83,7 +88,7 @@ function Thumb({ componentId, w, h }: { componentId: string; w: number; h: numbe
     >
       {url
         ? <div style={{ width: 10, height: 10, borderRadius: '50%', border: '2px solid #333', borderTopColor: '#666' }} />
-        : <span style={{ fontSize: 8, color: '#444' }}>no model</span>
+        : <PrimitiveThumb kind={renderInfo.primitiveKind} strategy={renderInfo.strategy} />
       }
     </div>
   )
@@ -123,6 +128,72 @@ function Thumb({ componentId, w, h }: { componentId: string; w: number; h: numbe
   )
 }
 
+const PRIMITIVE_ACCENT: Record<PrimitiveRenderKind, string> = {
+  display: '#35aaff',
+  sensor: '#50a36b',
+  resistor: '#d8b36a',
+  led: '#ff5a4f',
+  button: '#aaa',
+  relay: '#8a8a8a',
+  speaker: '#8a8a8a',
+  potentiometer: '#8a8a8a',
+  motor: '#8a8a8a',
+  microphone: '#8a8a8a',
+  ledstrip: '#ff5a4f',
+  'generic-block': '#8a8a8a',
+}
+
+function PrimitiveThumb({ kind, strategy }: { kind: PrimitiveRenderKind; strategy: string }) {
+  const accent = PRIMITIVE_ACCENT[kind] ?? '#8a8a8a'
+  const round = kind === 'led' || kind === 'speaker' || kind === 'microphone' ? '50%' : 4
+  return (
+    <div style={{
+      width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center', gap: 3,
+    }}>
+      <div style={{
+        width: kind === 'resistor' ? '64%' : '46%',
+        height: kind === 'resistor' ? 8 : '38%',
+        borderRadius: round,
+        background: accent,
+        boxShadow: kind === 'led' ? `0 0 10px ${accent}` : 'none',
+        opacity: strategy === 'generic-block' ? 0.55 : 0.9,
+      }} />
+      <span style={{ fontSize: 8, color: '#656565' }}>
+        {strategy === 'generic-block' ? 'generic' : kind}
+      </span>
+    </div>
+  )
+}
+
+function CatalogStatusBadges({ component, renderInfo, includeConfidence = false }: {
+  component: ComponentDef
+  renderInfo: ReturnType<typeof resolveCatalogRender>
+  includeConfidence?: boolean
+}) {
+  const meta = component.catalogMeta
+  return (
+    <>
+      {meta?.trust && meta.trust !== 'builtin' && (
+        <div style={{ color: meta.trust === 'ai-draft' ? '#d0b36a' : '#6688aa',
+                      fontSize: 9, marginTop: 2 }}>
+          {catalogStatusLabel(meta)}{includeConfidence ? ` · ${renderInfo.confidence} confidence` : ''}
+        </div>
+      )}
+      {meta?.sourceUrls && meta.sourceUrls.length > 0 && (
+        <div style={{ color: '#666', fontSize: 9, marginTop: 2 }}>
+          {meta.sourceUrls.length} source{meta.sourceUrls.length === 1 ? '' : 's'}
+        </div>
+      )}
+      {renderInfo.warnings.length > 0 && meta?.trust !== 'builtin' && (
+        <div style={{ color: '#bba86a', fontSize: 9, marginTop: 2 }}>
+          {renderInfo.warnings.length} review warning{renderInfo.warnings.length === 1 ? '' : 's'}
+        </div>
+      )}
+    </>
+  )
+}
+
 // ── Picker flyout (multi-variant families) ────────────────────────────────────
 
 interface PickerProps {
@@ -130,10 +201,14 @@ interface PickerProps {
   anchorRect: DOMRect
   onAdd: (id: string) => void
   onClose: () => void
+  catalogVersion: number
 }
 
-function FamilyPicker({ family, anchorRect, onAdd, onClose }: PickerProps) {
+function FamilyPicker({ family, anchorRect, onAdd, onClose, catalogVersion }: PickerProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const memberRenderInfo = useMemo(() => {
+    return new Map(family.members.map((c) => [c.id, resolveCatalogRender(c, !!catalog.getGlbUrl(c.id))]))
+  }, [family.members, catalogVersion])
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -168,24 +243,28 @@ function FamilyPicker({ family, anchorRect, onAdd, onClose }: PickerProps) {
         }}>×</button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        {family.members.map((c) => (
-          <button key={c.id} onClick={() => onAdd(c.id)} style={{
-            background: '#1e1e1e', border: '1px solid #2a2a2a', borderRadius: 6,
-            padding: 8, cursor: 'pointer', textAlign: 'center',
-            transition: 'border-color 0.15s',
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#4a4a4a')}
-          onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#2a2a2a')}
-          >
-            <Thumb componentId={c.id} w={116} h={72} />
-            <div style={{ color: '#ddd', fontSize: 10, marginTop: 6, fontWeight: 500 }}>
-              {c.name}
-            </div>
-            <div style={{ color: '#555', fontSize: 9, marginTop: 2 }}>
-              {c.pins.length} pins
-            </div>
-          </button>
-        ))}
+        {family.members.map((c) => {
+          const renderInfo = memberRenderInfo.get(c.id)!
+          return (
+            <button key={c.id} onClick={() => onAdd(c.id)} style={{
+              background: '#1e1e1e', border: '1px solid #2a2a2a', borderRadius: 6,
+              padding: 8, cursor: 'pointer', textAlign: 'center',
+              transition: 'border-color 0.15s',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#4a4a4a')}
+            onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#2a2a2a')}
+            >
+              <Thumb component={c} w={116} h={72} />
+              <div style={{ color: '#ddd', fontSize: 10, marginTop: 6, fontWeight: 500 }}>
+                {c.name}
+              </div>
+              <div style={{ color: '#555', fontSize: 9, marginTop: 2 }}>
+                {c.pins.length} pins · {renderInfo.strategy}
+              </div>
+              <CatalogStatusBadges component={c} renderInfo={renderInfo} />
+            </button>
+          )
+        })}
       </div>
     </div>
   )
@@ -205,6 +284,7 @@ function FamilyCard({ family, onAdd, isOpen, onOpen, onClose }: FamilyCardProps)
   const cardRef = useRef<HTMLButtonElement>(null)
   const multi = family.members.length > 1
   const rep = family.members[0]
+  const repRender = resolveCatalogRender(rep, !!catalog.getGlbUrl(rep.id))
 
   function handleClick() {
     if (!multi) { onAdd(rep.id); return }
@@ -228,7 +308,7 @@ function FamilyCard({ family, onAdd, isOpen, onOpen, onClose }: FamilyCardProps)
       onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#3a3a3a' }}
       onMouseLeave={(e) => { e.currentTarget.style.borderColor = isOpen ? '#3a3a3a' : '#222' }}
     >
-      <Thumb componentId={rep.id} w={46} h={34} />
+      <Thumb component={rep} w={46} h={34} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ color: '#ddd', fontWeight: 500, fontSize: 11, whiteSpace: 'nowrap',
                       overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -237,8 +317,9 @@ function FamilyCard({ family, onAdd, isOpen, onOpen, onClose }: FamilyCardProps)
         <div style={{ color: '#555', fontSize: 9, marginTop: 2 }}>
           {multi
             ? `${family.members.length} variants`
-            : `${rep.category} · ${rep.pins.length} pins`}
+            : `${rep.category} · ${rep.pins.length} pins · ${repRender.strategy}`}
         </div>
+        <CatalogStatusBadges component={rep} renderInfo={repRender} includeConfidence />
       </div>
       {multi && (
         <div style={{
@@ -255,7 +336,7 @@ function FamilyCard({ family, onAdd, isOpen, onOpen, onClose }: FamilyCardProps)
 // ── Main Palette ──────────────────────────────────────────────────────────────
 
 export default function Palette() {
-  useStore((s) => s.catalogVersion)
+  const catalogVersion = useStore((s) => s.catalogVersion)
   const project = useStore((s) => s.project)
   const add = useStore((s) => s.addComponent)
   const remove = useStore((s) => s.removeComponent)
@@ -342,6 +423,7 @@ export default function Palette() {
         <FamilyPicker
           family={openFamily_}
           anchorRect={anchorRect}
+          catalogVersion={catalogVersion}
           onAdd={(id) => { add(id); handleClose() }}
           onClose={handleClose}
         />

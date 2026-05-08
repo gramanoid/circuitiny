@@ -1,0 +1,30 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+context: |
+  Tech stack: Electron, TypeScript, React, Vite, Vitest, and Node.js.
+  Architecture: renderer state lives in Zustand; Electron IPC bridges local build,
+  simulation, catalog file access, and Codex CLI process calls.
+  AI integration: Codex CLI uses the learner's ChatGPT login, the app-configured
+  Codex model default, screenshot context, scoped Circuitiny tools, and explicit
+  reasoning effort.
+  Domain: beginner electronics learning for ESP32 circuits, DRC explanations,
+  generated ESP-IDF code, build/flash, simulation, and catalog-backed parts.
+  Conventions: keep UI dense and tool-like, prefer typed helpers, validate with
+  pnpm typecheck, pnpm test, pnpm build, and openspec validate.
+# Example:
+#   context: |
+#     Tech stack: TypeScript, React, Node.js
+#     We use conventional commits
+#     Domain: e-commerce platform
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours

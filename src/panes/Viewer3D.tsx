@@ -7,9 +7,12 @@ import type { ComponentInstance } from '../project/schema'
 import type { PinDef } from '../project/component'
 import { resolveSchematicSymbol } from '../project/component'
 import { catalog, pinColor } from '../catalog'
+import { primitiveKindForComponent, type PrimitiveRenderKind } from '../catalog/rendering'
 import { resolvePin, netColor } from '../project/pins'
 import { runDrc, suggestSafePin, type Violation } from '../drc'
 import { STRIP_LED_N } from '../sim/evaluate'
+import { explainViolation } from '../learning/drcExplanations'
+import { getActiveRecipeRefs } from '../learning/recipes'
 
 function PinAnchor({ pin, owner, position, color, glow, onClick }: {
   pin: PinDef
@@ -94,10 +97,17 @@ function BoardMesh({ board }: { board: import('../project/component').BoardDef }
   )
 }
 
+function useActiveRecipeRefs(): Set<string> {
+  const activeRecipeId = useStore((s) => s.activeRecipeId)
+  const recipeStepIndex = useStore((s) => s.recipeStepIndex)
+  return useMemo(() => new Set(getActiveRecipeRefs(activeRecipeId, recipeStepIndex)), [activeRecipeId, recipeStepIndex])
+}
+
 function BoardWithPins() {
   const project = useStore((s) => s.project)
   const pendingPin = useStore((s) => s.pendingPin)
   const clickPin = useStore((s) => s.clickPin)
+  const activeRefs = useActiveRecipeRefs()
   const board = catalog.getBoard(project.board)
   if (!board) return null
   const glbUrl = catalog.getGlbUrl(board.id)
@@ -107,11 +117,12 @@ function BoardWithPins() {
       {board.pins.map((p) => {
         const ref = `board.${p.id}`
         const isPending = pendingPin === ref
+        const isGuided = activeRefs.has(ref)
         return (
           <PinAnchor key={p.id} pin={p} owner="board"
                      position={p.position}
                      color={pinColor(p.type)}
-                     glow={isPending ? 1 : 0.2}
+                     glow={isPending || isGuided ? 1 : 0.2}
                      onClick={() => clickPin(ref)} />
         )
       })}
@@ -167,7 +178,7 @@ const LED_START_X = -((STRIP_LED_N - 1) * LED_SPACING) / 2
 function LedStripBody({ lit, pixels, onClick }: {
   lit?: boolean
   pixels?: Array<[number, number, number]>
-  onClick: (e: ThreeEvent<MouseEvent>) => void
+  onClick?: (e: ThreeEvent<MouseEvent>) => void
 }) {
   const meshRefs = useRef<(THREE.Mesh | null)[]>(Array(STRIP_LED_N).fill(null))
   const lightRefs = useRef<(THREE.PointLight | null)[]>(Array(STRIP_LED_N).fill(null))
@@ -224,10 +235,9 @@ function LedStripBody({ lit, pixels, onClick }: {
   )
 }
 
-function DefaultBody({ componentId, schematicSymbol, onClick, selected, lit, pixels, isButton, simActive }: {
-  componentId: string
-  schematicSymbol?: string
-  onClick: (e: ThreeEvent<MouseEvent>) => void
+function DefaultBody({ primitiveKind, onClick, selected, lit, pixels, isButton, simActive }: {
+  primitiveKind: PrimitiveRenderKind
+  onClick?: (e: ThreeEvent<MouseEvent>) => void
   selected: boolean
   lit?: boolean
   pixels?: Array<[number, number, number]>
@@ -235,11 +245,11 @@ function DefaultBody({ componentId, schematicSymbol, onClick, selected, lit, pix
   simActive?: boolean
 }) {
   // WS2812B LED strip: per-pixel RGB when pixels is set, rainbow animation otherwise.
-  if (schematicSymbol === 'ledstrip') {
+  if (primitiveKind === 'ledstrip') {
     return <LedStripBody lit={lit} pixels={pixels} onClick={onClick} />
   }
   // LED: dome + two leads.
-  if (componentId === 'led-5mm-red') {
+  if (primitiveKind === 'led') {
     const emissive = lit ? '#ff3030' : (selected ? '#551100' : '#220000')
     const emissiveIntensity = lit ? 3 : 1
     return (
@@ -266,8 +276,31 @@ function DefaultBody({ componentId, schematicSymbol, onClick, selected, lit, pix
       </group>
     )
   }
+  if (primitiveKind === 'resistor') {
+    return (
+      <group onClick={onClick}>
+        <mesh position={[0, 0, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+          <cylinderGeometry args={[0.0014, 0.0014, 0.006, 16]} />
+          <meshStandardMaterial color={selected ? '#ffd28a' : '#d8b36a'} roughness={0.45} />
+        </mesh>
+        {[-0.0018, 0, 0.0018].map((x, i) => (
+          <mesh key={i} position={[x, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+            <boxGeometry args={[0.00045, 0.003, 0.0029]} />
+            <meshStandardMaterial color={['#7a3f12', '#1a1a1a', '#d72a2a'][i]} roughness={0.5} />
+          </mesh>
+        ))}
+        {[-0.0052, 0.0052].map((x) => (
+          <mesh key={x} position={[x, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.00025, 0.00025, 0.005, 8]} />
+            <meshStandardMaterial color="#c9c9c9" metalness={0.8} roughness={0.25} />
+          </mesh>
+        ))}
+      </group>
+    )
+  }
   // Button: box with a highlight ring when clickable, brighter when pressed.
-  if (isButton) {
+  // sim.role can mark a GLB/catalog part as clickable even when its primitive fallback is not "button".
+  if (isButton || primitiveKind === 'button') {
     const pressed = lit
     const color = pressed ? '#ffffff' : (simActive ? '#00aaff' : (selected ? '#ffaa00' : '#555'))
     const emissive = pressed ? '#aaddff' : (simActive ? '#00aaff' : '#000')
@@ -287,10 +320,102 @@ function DefaultBody({ componentId, schematicSymbol, onClick, selected, lit, pix
       </group>
     )
   }
+  if (primitiveKind === 'display') {
+    const glow = simActive ? '#0aa7ff' : '#001d33'
+    return (
+      <group onClick={onClick}>
+        <mesh position={[0, 0, 0]} castShadow>
+          <boxGeometry args={[0.014, 0.0015, 0.009]} />
+          <meshStandardMaterial color={selected ? '#1d6ea3' : '#1f5f8a'} roughness={0.55} />
+        </mesh>
+        <mesh position={[0, 0.001, -0.0003]}>
+          <boxGeometry args={[0.0105, 0.0004, 0.0058]} />
+          <meshStandardMaterial color="#071625" emissive={glow} emissiveIntensity={simActive ? 1.6 : 0.4} />
+        </mesh>
+        {simActive && <pointLight position={[0, 0.004, 0]} intensity={0.02} distance={0.05} color="#35c5ff" />}
+      </group>
+    )
+  }
+  if (primitiveKind === 'sensor') {
+    return (
+      <group onClick={onClick}>
+        <mesh position={[0, 0, 0]} castShadow>
+          <boxGeometry args={[0.012, 0.0015, 0.008]} />
+          <meshStandardMaterial color={selected ? '#2f8f5b' : '#276e49'} roughness={0.6} />
+        </mesh>
+        <mesh position={[0, 0.0014, 0]} castShadow>
+          <boxGeometry args={[0.0045, 0.0014, 0.0045]} />
+          <meshStandardMaterial color="#d8d8d8" metalness={0.4} roughness={0.25} />
+        </mesh>
+        {[...Array(4)].map((_, i) => (
+          <mesh key={i} position={[-0.0045 + i * 0.003, -0.0005, -0.005]}>
+            <boxGeometry args={[0.0007, 0.002, 0.001]} />
+            <meshStandardMaterial color="#111" />
+          </mesh>
+        ))}
+      </group>
+    )
+  }
+  if (primitiveKind === 'relay') {
+    return (
+      <group onClick={onClick}>
+        <mesh position={[0, 0.0015, 0]} castShadow>
+          <boxGeometry args={[0.014, 0.007, 0.010]} />
+          <meshStandardMaterial color={selected ? '#3d7cff' : '#2457c2'} roughness={0.45} />
+        </mesh>
+        <mesh position={[0, 0.0055, 0.003]}>
+          <boxGeometry args={[0.008, 0.0005, 0.002]} />
+          <meshStandardMaterial color="#dfe7ff" />
+        </mesh>
+      </group>
+    )
+  }
+  if (primitiveKind === 'speaker' || primitiveKind === 'microphone') {
+    return (
+      <group onClick={onClick}>
+        <mesh position={[0, 0, 0]} rotation={[-Math.PI / 2, 0, 0]} castShadow>
+          <cylinderGeometry args={[0.0045, 0.0045, 0.002, 24]} />
+          <meshStandardMaterial color={selected ? '#444' : '#111'} roughness={0.4} />
+        </mesh>
+        <mesh position={[0, 0.0012, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[0.002, 0.0038, 24]} />
+          <meshStandardMaterial color="#666" side={2} />
+        </mesh>
+      </group>
+    )
+  }
+  if (primitiveKind === 'potentiometer') {
+    return (
+      <group onClick={onClick}>
+        <mesh position={[0, 0, 0]} castShadow>
+          <boxGeometry args={[0.010, 0.002, 0.008]} />
+          <meshStandardMaterial color={selected ? '#335f38' : '#264b2b'} roughness={0.55} />
+        </mesh>
+        <mesh position={[0, 0.003, 0]} rotation={[-Math.PI / 2, 0, 0]} castShadow>
+          <cylinderGeometry args={[0.0032, 0.0032, 0.003, 24]} />
+          <meshStandardMaterial color="#1a1a1a" roughness={0.35} />
+        </mesh>
+      </group>
+    )
+  }
+  if (primitiveKind === 'motor') {
+    return (
+      <group onClick={onClick}>
+        <mesh position={[0, 0.001, 0]} castShadow>
+          <boxGeometry args={[0.012, 0.006, 0.010]} />
+          <meshStandardMaterial color={selected ? '#4470a8' : '#2e4d75'} roughness={0.5} />
+        </mesh>
+        <mesh position={[0, 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.001, 0.001, 0.010, 12]} />
+          <meshStandardMaterial color="#f0f0f0" metalness={0.7} roughness={0.25} />
+        </mesh>
+      </group>
+    )
+  }
   // Generic fallback.
   return (
-    <mesh onClick={onClick}>
-      <boxGeometry args={[0.006, 0.006, 0.006]} />
+    <mesh onClick={onClick} castShadow>
+      <boxGeometry args={[0.008, 0.005, 0.008]} />
       <meshStandardMaterial color={selected ? '#ffaa00' : '#cc3333'} emissive={selected ? '#552200' : '#000'} />
     </mesh>
   )
@@ -383,6 +508,7 @@ function ComponentWithPins({ c, selected, lit, simActive }: {
   const pixels = useStore((s) => s.simStrips[c.instance])
   const pressButton = useStore((s) => s.pressButton)
   const releaseButton = useStore((s) => s.releaseButton)
+  const activeRefs = useActiveRecipeRefs()
   const def = catalog.getComponent(c.componentId)
   const glbUrl = catalog.getGlbUrl(c.componentId)
   const pos = c.position ?? [0, 0.01, 0]
@@ -420,6 +546,7 @@ function ComponentWithPins({ c, selected, lit, simActive }: {
     }
   }
 
+  const primitiveKind = primitiveKindForComponent(def)
   const content = (
     <group ref={groupRef} position={pos}>
       <group onPointerDown={handlePointerDown} onPointerUp={handlePointerUp}>
@@ -427,18 +554,19 @@ function ComponentWithPins({ c, selected, lit, simActive }: {
           ? <OledDisplayBody url={glbUrl} scale={def?.scale ?? 1} lit={lit} simActive={simActive} simLog={simLog} />
           : glbUrl
             ? <LoadedGlb url={glbUrl} scale={def?.scale ?? 1} lit={lit} simActive={simActive} />
-            : <DefaultBody componentId={c.componentId} schematicSymbol={resolveSchematicSymbol(def?.schematic)} selected={selected} lit={lit}
-                           pixels={pixels} isButton={isButton} simActive={simActive}
-                           onClick={() => {}} />}
+            : <DefaultBody selected={selected} lit={lit}
+                           primitiveKind={primitiveKind}
+                           pixels={pixels} isButton={isButton} simActive={simActive} />}
       </group>
       {def?.pins.map((p) => {
         const ref = `${c.instance}.${p.id}`
         const isPending = pendingPin === ref
+        const isGuided = activeRefs.has(ref)
         return (
           <PinAnchor key={p.id} pin={p} owner={c.instance}
                      position={p.position}
                      color={pinColor(p.type)}
-                     glow={isPending ? 1 : 0.2}
+                     glow={isPending || isGuided ? 1 : 0.2}
                      onClick={() => clickPin(ref)} />
         )
       })}
@@ -512,11 +640,18 @@ function findNetId(nets: Net[], endpoints: string[]): string | null {
 }
 
 function ViolationRow({ v, netId, safe, onFix }: { v: Violation; netId: string | null; safe: string | null; onFix: () => void }) {
+  const explanation = explainViolation(v)
   return (
     <div style={{ marginBottom: 4, padding: 4,
                   borderLeft: `3px solid ${v.severity === 'error' ? '#ff3b30' : '#ffcc00'}`,
                   background: '#1a1a1a' }}>
-      <div>{v.message}</div>
+      <div style={{ fontWeight: 700 }}>{explanation.title}</div>
+      <div style={{ marginTop: 2 }}>{v.message}</div>
+      <div style={{ marginTop: 4, color: '#aaa', lineHeight: 1.35 }}>{explanation.meaning}</div>
+      <div style={{ marginTop: 3, color: v.severity === 'error' ? '#ffb3b3' : '#ffe08a', lineHeight: 1.35 }}>
+        {explanation.physicalRisk}
+      </div>
+      <div style={{ marginTop: 3, color: '#9ecbff', lineHeight: 1.35 }}>{explanation.nextAction}</div>
       <div style={{ fontSize: 9, color: '#888' }}>{v.involves.join(' ↔ ')}</div>
       {netId && safe && (
         <button onClick={onFix}

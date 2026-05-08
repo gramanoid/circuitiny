@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useStore } from '../store'
 import { runDrc } from '../drc'
 import { generate } from '../codegen/generate'
+import { getCheckpoint, getRecipe, getRecipeStep } from '../learning/recipes'
 
 const SPEEDS: Array<1 | 2 | 5 | 10> = [1, 2, 5, 10]
 
@@ -16,6 +17,8 @@ export default function SimPane() {
   const nativeCompileError  = useStore((s) => s.nativeCompileError)
   const nativeBinaryPath    = useStore((s) => s.nativeBinaryPath)
   const nativeRunId         = useStore((s) => s.nativeRunId)
+  const activeRecipeId      = useStore((s) => s.activeRecipeId)
+  const recipeStepIndex     = useStore((s) => s.recipeStepIndex)
   const setSim              = useStore((s) => s.setSimulating)
   const setSpeed            = useStore((s) => s.setSimSpeed)
   const setSimMode          = useStore((s) => s.setSimMode)
@@ -24,6 +27,11 @@ export default function SimPane() {
   const logRef = useRef<HTMLDivElement>(null)
 
   const canRun = runDrc(project).errors.length === 0
+  const { recipe, recipeStep, checkpoint } = useMemo(() => {
+    const recipe = getRecipe(activeRecipeId)
+    const recipeStep = getRecipeStep(activeRecipeId, recipeStepIndex)
+    return { recipe, recipeStep, checkpoint: getCheckpoint(recipe, recipeStep?.checkpointId) }
+  }, [activeRecipeId, recipeStepIndex])
 
   useEffect(() => {
     const el = logRef.current
@@ -225,6 +233,23 @@ export default function SimPane() {
               ? 'Press Play to run the behavior simulation. Click buttons in the 3D view to fire GPIO edges.'
               : 'Fix DRC errors before running the simulation.'
           )}
+        </div>
+      )}
+
+      {checkpoint?.kind === 'simulation' && (
+        <div style={{
+          padding: '8px 12px',
+          borderTop: '1px solid #1a2633',
+          borderBottom: '1px solid #1a2633',
+          background: '#0c141d',
+          fontSize: 11,
+          color: '#9ecbff',
+          lineHeight: 1.4,
+        }}>
+          <b>{checkpoint.title}</b>
+          <div style={{ color: '#8ba7c2', marginTop: 2 }}>{checkpoint.expected}</div>
+          {checkpoint.requiresInput && <div style={{ color: '#d0b66d', marginTop: 2 }}>{checkpoint.requiresInput}</div>}
+          {!canRun && <div style={{ color: '#ff9b9b', marginTop: 2 }}>Fix DRC errors first; simulation is blocked for safety.</div>}
         </div>
       )}
 

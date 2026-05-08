@@ -1,16 +1,17 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { join, dirname } from 'path'
+import { join, dirname, delimiter, resolve, relative, isAbsolute } from 'path'
 import { fileURLToPath } from 'url'
-import { readFile, writeFile, mkdir, readdir } from 'fs/promises'
+import { readFile, writeFile, mkdir, readdir, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
-import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'child_process'
+import { spawn, spawnSync, type ChildProcess, type ChildProcessWithoutNullStreams } from 'child_process'
 import { randomUUID } from 'crypto'
 import * as pty from 'node-pty'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const ICON_PATH = join(__dirname, '../../resources/icon.png')
 const CIRCUITINY_HOME = join(homedir(), '.circuitiny')
+const CATALOG_ROOT = join(CIRCUITINY_HOME, 'catalog')
 const PROJECTS_ROOT = join(homedir(), 'circuitiny', 'projects')
 // Resolution order: explicit override → IDF's own export.sh env var → standard install location
 const IDF_PATH = process.env.CIRCUITINY_IDF_PATH ?? process.env.IDF_PATH ?? join(homedir(), 'esp', 'esp-idf')
@@ -110,12 +111,35 @@ ipcMain.handle('listCatalog', async () => {
 
 ipcMain.handle('writeBundle', async (_e, id: string, glbName: string, glbData: Uint8Array, jsonText: string) => {
   if (!id) throw new Error('id is required')
-  const dir = join(CIRCUITINY_HOME, 'catalog', id)
+  const dir = catalogEntryDirFor(id)
+  const safeGlbName = safeCatalogFileName(glbName)
   await mkdir(dir, { recursive: true })
-  await writeFile(join(dir, glbName), Buffer.from(glbData))
+  await writeFile(join(dir, safeGlbName), Buffer.from(glbData))
   await writeFile(join(dir, 'component.json'), jsonText, 'utf8')
   return dir
 })
+
+ipcMain.handle('writeComponentJson', async (_e, id: string, jsonText: string) => {
+  if (!id) throw new Error('id is required')
+  const dir = catalogEntryDirFor(id)
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, 'component.json'), jsonText, 'utf8')
+  return dir
+})
+
+function catalogEntryDirFor(id: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error('invalid catalog id')
+  const base = resolve(CATALOG_ROOT)
+  const dir = resolve(base, id)
+  const rel = relative(base, dir)
+  if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('catalog path escapes catalog root')
+  return dir
+}
+
+function safeCatalogFileName(name: string): string {
+  if (!/^[A-Za-z0-9_.-]+$/.test(name) || name.includes('..')) throw new Error('invalid catalog asset name')
+  return name
+}
 
 // ---- M5: flash pipeline ----
 
@@ -318,9 +342,97 @@ ipcMain.handle('simInject', async (_e, runId: string, line: string) => {
 
 const CLAUDE_EXTRA_PATHS = [
   join(homedir(), '.local', 'bin'),
+  join(homedir(), '.volta', 'bin'),
+  join(homedir(), 'Library', 'pnpm'),
   '/opt/homebrew/bin',
   '/usr/local/bin',
+  ...(process.platform === 'win32'
+    ? [
+        join(process.env.APPDATA ?? '', 'npm'),
+        join(process.env.ProgramFiles ?? 'C:\\Program Files', 'nodejs'),
+      ]
+    : []),
 ]
+const CLI_EXTRA_PATHS = CLAUDE_EXTRA_PATHS
+
+function defaultCodexCliModel(requestedModel: string | undefined): string {
+  const requested = requestedModel?.trim()
+  if (requested) return requested
+  // This IPC path is the ChatGPT/Codex CLI provider; API-key chat uses the separate OpenAI provider.
+  // Keep aligned with PROVIDER_DEFAULTS.codexcli.defaultModel in src/agent/types.ts.
+  return 'gpt-5.5'
+}
+
+function isCodexReasoningEffort(value: unknown): value is 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' {
+  return value === 'minimal' || value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh'
+}
+
+function cliNames(name: string): string[] {
+  return process.platform === 'win32' ? [`${name}.cmd`, `${name}.exe`, name] : [name]
+}
+
+function firstExistingCli(name: string, dirs: string[]): string | null {
+  for (const dir of dirs.filter(Boolean)) {
+    for (const binaryName of cliNames(name)) {
+      const candidate = join(dir, binaryName)
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  return null
+}
+
+function sanitizeCliDiagnostic(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  if (!trimmed) return trimmed
+  const home = homedir()
+  return trimmed.split(/\r?\n/).map((line) => (
+    home && line.startsWith(home) ? `~${line.slice(home.length)}` : line
+  )).join('\n')
+}
+
+function resolveCliBinary(name: string, extraPaths: string[]): string {
+  const env = { ...process.env, PATH: [...extraPaths, process.env.PATH ?? ''].join(delimiter) }
+  const direct = firstExistingCli(name, extraPaths)
+  if (direct) return direct
+
+  const lookup = spawnSync(process.platform === 'win32' ? 'where' : 'which', [name], { env, encoding: 'utf8' })
+  const lookupPath = lookup.stdout?.split(/\r?\n/).find(Boolean)
+  if (lookup.status === 0 && lookupPath) return lookupPath.trim()
+
+  const npmBin = spawnSync('npm', ['bin', '-g'], { env, encoding: 'utf8' })
+  const npmBinPath = npmBin.status === 0 ? firstExistingCli(name, [npmBin.stdout.trim()]) : null
+  if (npmBinPath) return npmBinPath
+
+  const npmPrefix = spawnSync('npm', ['prefix', '-g'], { env, encoding: 'utf8' })
+  const npmPrefixPath = npmPrefix.status === 0
+    ? firstExistingCli(name, [process.platform === 'win32' ? npmPrefix.stdout.trim() : join(npmPrefix.stdout.trim(), 'bin')])
+    : null
+  if (npmPrefixPath) return npmPrefixPath
+  console.warn('CLI binary resolution failed; falling back to PATH lookup at spawn time', {
+    name,
+    extraPathCount: extraPaths.filter(Boolean).length,
+    lookupStatus: lookup.status,
+    npmBinStatus: npmBin.status,
+    npmBinOutput: sanitizeCliDiagnostic(npmBin.stdout),
+    npmPrefixStatus: npmPrefix.status,
+    npmPrefixOutput: sanitizeCliDiagnostic(npmPrefix.stdout),
+  })
+  return name
+}
+
+async function captureCodexContextImage(capture: boolean): Promise<string | null> {
+  if (!capture) return null
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) return null
+  try {
+    const image = await mainWindow.webContents.capturePage()
+    if (image.isEmpty()) return null
+    const imagePath = join(app.getPath('temp'), `circuitiny-canvas-${randomUUID()}.png`)
+    await writeFile(imagePath, image.toPNG())
+    return imagePath
+  } catch {
+    return null
+  }
+}
 
 ipcMain.handle('claudeCodeChat', async (_e, opts: {
   prompt: string
@@ -329,7 +441,7 @@ ipcMain.handle('claudeCodeChat', async (_e, opts: {
 }): Promise<{ ok: boolean; text?: string; error?: string }> => {
   const claudePath = join(homedir(), '.local', 'bin', 'claude')
   const binary = existsSync(claudePath) ? claudePath : 'claude'
-  const PATH = [...CLAUDE_EXTRA_PATHS, process.env.PATH ?? ''].join(':')
+  const PATH = [...CLAUDE_EXTRA_PATHS, process.env.PATH ?? ''].join(delimiter)
 
   return new Promise((resolve) => {
     const args = [
@@ -364,6 +476,105 @@ ipcMain.handle('claudeCodeChat', async (_e, opts: {
       resolve({ ok: false, error: err.message })
     })
   })
+})
+
+// ---- Codex CLI session chat ----
+
+const codexRuns = new Map<string, ChildProcess>()
+const CODEX_CLI_TIMEOUT_MS = 300_000
+
+ipcMain.handle('codexChat', async (_e, opts: {
+  runId?: string
+  prompt: string
+  model: string
+  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  includeScreenshot?: boolean
+}): Promise<{ ok: boolean; text?: string; error?: string }> => {
+  const PATH = [...CLI_EXTRA_PATHS, process.env.PATH ?? ''].join(delimiter)
+  const binary = resolveCliBinary('codex', CLI_EXTRA_PATHS)
+  const outputPath = join(app.getPath('temp'), `circuitiny-codex-${randomUUID()}.txt`)
+  const imagePath = await captureCodexContextImage(opts.includeScreenshot === true)
+  const runId = opts.runId ?? randomUUID()
+  const model = defaultCodexCliModel(opts.model)
+  const reasoningEffort = isCodexReasoningEffort(opts.reasoningEffort) ? opts.reasoningEffort : 'high'
+
+  return new Promise((resolve) => {
+    // Confirmed with `codex exec --help`: -c/--config, -i/--image, and -o/--output-last-message are supported.
+    const args = [
+      'exec',
+      '--ephemeral',
+      '--skip-git-repo-check',
+      '--sandbox', 'read-only',
+      '--model', model,
+      '-c', `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`,
+      ...(imagePath ? ['--image', imagePath] : []),
+      '--output-last-message', outputPath,
+      '-',
+    ]
+
+    const child = spawn(binary, args, {
+      env: { ...process.env, PATH },
+      cwd: app.getPath('home'),
+    }) as ChildProcess
+    codexRuns.set(runId, child)
+
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    let forceKillTimer: ReturnType<typeof setTimeout> | null = null
+
+    async function finish(result: { ok: boolean; text?: string; error?: string }) {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      if (forceKillTimer) clearTimeout(forceKillTimer)
+      codexRuns.delete(runId)
+      await unlink(outputPath).catch(() => {})
+      if (imagePath) await unlink(imagePath).catch(() => {})
+      resolve(result)
+    }
+
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM')
+      forceKillTimer = setTimeout(() => {
+        if (child.exitCode == null && child.signalCode == null) child.kill('SIGKILL')
+      }, 1500)
+      finish({ ok: false, error: `Codex CLI timed out after ${Math.round(CODEX_CLI_TIMEOUT_MS / 1000)} seconds` }).catch((err) => {
+        console.warn('Failed to finish timed-out Codex run', err)
+      })
+    }, CODEX_CLI_TIMEOUT_MS)
+
+    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf8') })
+    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString('utf8') })
+
+    child.stdin?.write(opts.prompt)
+    child.stdin?.end()
+
+    child.on('exit', async (code) => {
+      const text = await readFile(outputPath, 'utf8').catch(() => stdout)
+      if (code === 0) {
+        await finish({ ok: true, text })
+      } else {
+        await finish({ ok: false, error: stderr.trim() || stdout.trim() || `codex exited with code ${code}` })
+      }
+    })
+    child.on('error', async (err) => {
+      await finish({ ok: false, error: err.message })
+    })
+  })
+})
+
+ipcMain.handle('codexStop', async (_e, runId: string) => {
+  const child = codexRuns.get(runId)
+  if (!child) return { ok: false, reason: 'not_found' }
+  child.kill('SIGTERM')
+  const killTimeout = setTimeout(() => {
+    if (codexRuns.get(runId) === child && child.exitCode == null && child.signalCode == null) child.kill('SIGKILL')
+  }, 1500)
+  child.once('exit', () => clearTimeout(killTimeout))
+  child.once('error', () => clearTimeout(killTimeout))
+  if (child.exitCode != null || child.signalCode != null) clearTimeout(killTimeout)
+  return { ok: true }
 })
 
 // ---- Project save / open ----
@@ -420,7 +631,7 @@ app.on('before-quit', () => {
 })
 
 app.whenReady().then(() => {
-  if (process.platform === 'darwin') app.dock.setIcon(ICON_PATH)
+  if (process.platform === 'darwin' && existsSync(ICON_PATH)) app.dock?.setIcon(ICON_PATH)
   createWindow()
 })
 

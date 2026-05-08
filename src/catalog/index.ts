@@ -8,6 +8,7 @@ const ledRed: ComponentDef = {
   name: 'LED 5mm Red',
   version: '0.1.0',
   category: 'actuator',
+  family: 'led',
   model: 'led.glb',
   pins: [
     { id: 'anode',   label: 'A+', type: 'digital_in',
@@ -309,6 +310,7 @@ const resistor220: ComponentDef = {
   name: 'Resistor 220Ω',
   version: '0.1.0',
   category: 'misc',
+  family: 'resistor',
   model: 'resistor.glb',
   pins: [
     { id: 'in',  label: 'in',  type: 'digital_in',  position: [-0.003, -0.003, 0], normal: [0, -1, 0] },
@@ -317,11 +319,26 @@ const resistor220: ComponentDef = {
   schematic: { symbol: 'resistor' },
 }
 
+const capacitor100nf: ComponentDef = {
+  id: 'capacitor-100nf',
+  name: 'Capacitor 100nF',
+  version: '0.1.0',
+  category: 'misc',
+  family: 'capacitor',
+  model: '', // Intentionally empty so metadata backfill keeps the primitive renderer.
+  pins: [
+    { id: 'a', label: 'A', type: 'digital_io', position: [-0.0025, -0.003, 0], normal: [0, -1, 0] },
+    { id: 'b', label: 'B', type: 'digital_io', position: [0.0025, -0.003, 0], normal: [0, -1, 0] },
+  ],
+  schematic: { symbol: 'capacitor' },
+}
+
 const button6mm: ComponentDef = {
   id: 'button-6mm',
   name: 'Push Button 6mm',
   version: '0.1.0',
   category: 'input',
+  family: 'button',
   model: 'button.glb',
   pins: [
     { id: 'a', label: 'A', type: 'digital_io', position: [-0.0032, -0.003, 0], normal: [0, -1, 0] },
@@ -402,7 +419,16 @@ const freenoveWrover: BoardDef = {
 const components: Record<string, ComponentDef> = {
   [ledRed.id]:        ledRed,
   [resistor220.id]:   resistor220,
+  [capacitor100nf.id]: capacitor100nf,
   [button6mm.id]:     button6mm,
+}
+
+function applyDefaultCatalogMeta(def: ComponentDef): void {
+  def.catalogMeta ??= { trust: 'builtin', confidence: 'high', renderStrategy: def.model ? 'catalog-glb' : 'primitive' }
+}
+
+for (const def of Object.values(components)) {
+  applyDefaultCatalogMeta(def)
 }
 const boards: Record<string, BoardDef> = {
   [devkitc.id]:         devkitc,
@@ -421,12 +447,19 @@ export const catalog = {
   listComponents: (): ComponentDef[] => Object.values(components),
   listBoards: (): BoardDef[] => Object.values(boards),
   registerComponent: (def: ComponentDef, glbData?: Uint8Array | null) => {
+    applyDefaultCatalogMeta(def)
     components[def.id] = def
     if (glbData) {
       const buf = glbData.slice().buffer as ArrayBuffer
       glbBlobs[def.id] = URL.createObjectURL(new Blob([buf], { type: 'model/gltf-binary' }))
     }
-  }
+  },
+  removeComponent: (id: string) => {
+    delete components[id]
+    const blobUrl = glbBlobs[id]
+    if (blobUrl && typeof URL !== 'undefined') URL.revokeObjectURL(blobUrl)
+    delete glbBlobs[id]
+  },
 }
 
 const PIN_COLORS: Partial<Record<PinType, string>> = {

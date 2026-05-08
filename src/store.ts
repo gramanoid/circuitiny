@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import { type Project, emptyProject, type PinType, type Behavior } from './project/schema'
 import { catalog } from './catalog'
 import type { PendingSequence } from './sim/evaluate'
+import type { CatalogMeta } from './project/component'
+import { getRecipe } from './learning/recipes'
+import type { LearningRecipe } from './learning/types'
 
 export type Mode = 'project' | 'catalog-editor'
 
@@ -19,6 +22,7 @@ export interface CatalogDraft {
   id: string
   name: string
   category: Category
+  catalogMeta: CatalogMeta
   glbPath: string | null
   glbName: string | null
   glbData: Uint8Array | null
@@ -28,6 +32,11 @@ export interface CatalogDraft {
 }
 
 export type PinRef = string  // "instance.pinId" or "board.pinId"
+
+function clampRecipeStep(activeRecipe: LearningRecipe | null, index: number): number {
+  const maxIndex = Math.max(0, (activeRecipe?.steps.length ?? 0) - 1)
+  return Math.min(maxIndex, Math.max(0, index))
+}
 
 interface State {
   mode: Mode
@@ -54,6 +63,10 @@ interface State {
   nativeCompileError: string | null
   nativeBinaryPath: string | null
   nativeRunId: string | null
+  activeRecipeId: string | null
+  activeRecipe: LearningRecipe | null
+  recipeStepIndex: number
+  guidanceVisible: boolean
   draft: CatalogDraft
 
   setMode: (m: Mode) => void
@@ -62,6 +75,12 @@ interface State {
   markSaved: (path: string) => void
   openBoardPicker: () => void
   createProject: (name: string, boardId: string) => void
+  startRecipe: (id: string) => void
+  setRecipeStep: (index: number) => void
+  nextRecipeStep: () => void
+  previousRecipeStep: () => void
+  showGuidance: () => void
+  exitGuidance: () => void
   select: (instance: string | null) => void
   undo: () => void
   redo: () => void
@@ -93,7 +112,7 @@ interface State {
   setBehavior: (b: Behavior) => void
 
   loadDraftGlb: (path: string, name: string, data: Uint8Array, suggestedScale?: number) => void
-  setDraftMeta: (patch: Partial<Pick<CatalogDraft, 'id' | 'name' | 'category' | 'scale'>>) => void
+  setDraftMeta: (patch: Partial<Pick<CatalogDraft, 'id' | 'name' | 'category' | 'scale' | 'catalogMeta'>>) => void
   loadDraftFromBundle: (d: Partial<CatalogDraft>) => void
   addDraftPin: (position: [number, number, number], normal: [number, number, number]) => void
   updateDraftPin: (id: string, patch: Partial<DraftPin>) => void
@@ -102,11 +121,23 @@ interface State {
   resetDraft: () => void
 }
 
+const defaultDraftCatalogMeta = (): CatalogMeta => ({
+    trust: 'reviewed',
+    confidence: 'medium',
+    renderStrategy: 'catalog-glb',
+    reviewNotes: ['Created in Circuitiny Catalog Editor.'],
+})
+
 const newDraft = (): CatalogDraft => ({
   id: '', name: '', category: 'sensor',
+  catalogMeta: defaultDraftCatalogMeta(),
   glbPath: null, glbName: null, glbData: null,
   scale: 1, pins: [], selectedPin: null
 })
+
+function ensureDraftCatalogMeta(draft: CatalogDraft): CatalogDraft {
+  return { ...draft, catalogMeta: draft.catalogMeta ?? defaultDraftCatalogMeta() }
+}
 
 // Push current project onto the undo stack before a circuit mutation.
 function snapshot(s: State) {
@@ -138,6 +169,10 @@ export const useStore = create<State>((set) => ({
   nativeCompileError: null,
   nativeBinaryPath: null,
   nativeRunId: null,
+  activeRecipeId: null,
+  activeRecipe: null,
+  recipeStepIndex: 0,
+  guidanceVisible: false,
   draft: newDraft(),
 
   setMode: (mode) => set({ mode }),
@@ -146,13 +181,28 @@ export const useStore = create<State>((set) => ({
     project, savedPath: path ?? null, dirty: false,
     past: [], future: [],
     mode: 'project', selected: null, pendingPin: null,
+    activeRecipeId: null, activeRecipe: null, recipeStepIndex: 0, guidanceVisible: false,
     simulating: false, simTime: 0, simGpios: {}, simStrips: {}, simLog: [], pendingEdges: [], simPendingSequences: []
   }),
   markSaved: (savedPath) => set({ savedPath, dirty: false }),
   openBoardPicker: () => set({ showBoardPicker: true }),
   createProject: (name, boardId) => {
-    set({ project: emptyProject(name || 'untitled', boardId), savedPath: null, dirty: false, past: [], future: [], showBoardPicker: false, selected: null, pendingPin: null })
+    set({
+      project: emptyProject(name || 'untitled', boardId),
+      savedPath: null, dirty: false, past: [], future: [],
+      showBoardPicker: false, selected: null, pendingPin: null,
+      activeRecipeId: null, activeRecipe: null, recipeStepIndex: 0, guidanceVisible: false,
+    })
   },
+  startRecipe: (activeRecipeId) => {
+    const activeRecipe = getRecipe(activeRecipeId)
+    set({ activeRecipeId, activeRecipe, recipeStepIndex: clampRecipeStep(activeRecipe, 0), guidanceVisible: true })
+  },
+  setRecipeStep: (recipeStepIndex) => set((s) => ({ recipeStepIndex: clampRecipeStep(s.activeRecipe, recipeStepIndex), guidanceVisible: true })),
+  nextRecipeStep: () => set((s) => ({ recipeStepIndex: clampRecipeStep(s.activeRecipe, s.recipeStepIndex + 1), guidanceVisible: true })),
+  previousRecipeStep: () => set((s) => ({ recipeStepIndex: clampRecipeStep(s.activeRecipe, s.recipeStepIndex - 1), guidanceVisible: true })),
+  showGuidance: () => set({ guidanceVisible: true }),
+  exitGuidance: () => set({ guidanceVisible: false, activeRecipeId: null, activeRecipe: null, recipeStepIndex: 0 }),
   select: (selected) => set({ selected }),
 
   clickPin: (ref) => set((s) => {
@@ -324,8 +374,8 @@ export const useStore = create<State>((set) => ({
   loadDraftGlb: (glbPath, glbName, glbData, suggestedScale) =>
     set((s) => ({ draft: { ...s.draft, glbPath, glbName, glbData,
                            scale: suggestedScale ?? s.draft.scale } })),
-  setDraftMeta: (patch) => set((s) => ({ draft: { ...s.draft, ...patch } })),
-  loadDraftFromBundle: (d) => set((s) => ({ draft: { ...newDraft(), ...d } })),
+  setDraftMeta: (patch) => set((s) => ({ draft: ensureDraftCatalogMeta({ ...s.draft, ...patch }) })),
+  loadDraftFromBundle: (d) => set(() => ({ draft: ensureDraftCatalogMeta({ ...newDraft(), ...d }) })),
   addDraftPin: (position, normal) =>
     set((s) => {
       const id = `pin${s.draft.pins.length + 1}`

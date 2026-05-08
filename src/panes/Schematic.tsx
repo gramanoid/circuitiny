@@ -5,6 +5,7 @@ import { netColor } from '../project/pins'
 import type { PinType } from '../project/schema'
 import { resolveSchematicSymbol, type SchematicSymbol } from '../project/component'
 import { SchematicSymbolGlyph, symbolPinAnchors } from './schematicSymbols'
+import { getActiveRecipeRefs } from '../learning/recipes'
 
 const PIN_PITCH = 20
 const BOARD_W = 180
@@ -29,8 +30,11 @@ export default function Schematic() {
   const clickPin = useStore((s) => s.clickPin)
   const removeNet = useStore((s) => s.removeNet)
   const catalogVersion = useStore((s) => s.catalogVersion)
+  const activeRecipeId = useStore((s) => s.activeRecipeId)
+  const recipeStepIndex = useStore((s) => s.recipeStepIndex)
 
   const layout = useMemo(() => computeLayout(project), [project, catalogVersion])
+  const activeRefs = useMemo(() => new Set(getActiveRecipeRefs(activeRecipeId, recipeStepIndex) ?? []), [activeRecipeId, recipeStepIndex])
 
   const svgRef = useRef<SVGSVGElement>(null)
   const [view, setView] = useState({ tx: 0, ty: 0, k: 1 })
@@ -142,13 +146,14 @@ export default function Schematic() {
         const textX = p.x + sideSign * 16
         const anchor = p.side === 'left' ? 'end' : 'start'
         const isPending = pending === p.ref
+        const isGuided = activeRefs.has(p.ref)
         return (
           <g key={p.ref}>
             <line x1={p.x} y1={p.y} x2={p.x + stub} y2={p.y}
-                  stroke={pinColor(p.type)} strokeWidth={1.5} />
-            <circle cx={p.x + stub} cy={p.y} r={isPending ? 5 : 3.5}
+                  stroke={pinColor(p.type)} strokeWidth={isGuided ? 3 : 1.5} />
+            <circle cx={p.x + stub} cy={p.y} r={isPending || isGuided ? 5 : 3.5}
                     fill={pinColor(p.type)}
-                    stroke={isPending ? '#fff' : 'transparent'} strokeWidth={1.5}
+                    stroke={isPending ? '#fff' : isGuided ? '#9ecbff' : 'transparent'} strokeWidth={1.8}
                     style={{ cursor: 'pointer' }}
                     onClick={(e) => { e.stopPropagation(); clickPin(p.ref) }} />
             <text x={textX} y={p.y + 3} fontSize={9} fill="#aaa"

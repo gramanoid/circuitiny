@@ -81,6 +81,16 @@ describe('catalog — components', () => {
     expect(catalog.getComponent('resistor-220r')?.pins).toHaveLength(2)
   })
 
+  it('built-in components carry trusted catalog metadata', () => {
+    for (const id of ['led-5mm-red', 'resistor-220r', 'capacitor-100nf', 'button-6mm']) {
+      const component = catalog.getComponent(id)
+      expect(component, `component ${id} should exist`).toBeDefined()
+      expect(component!.catalogMeta?.trust, component!.id).toBe('builtin')
+      expect(component!.catalogMeta?.confidence, component!.id).toBe('high')
+      expect(component!.catalogMeta?.renderStrategy, component!.id).toBe(component!.model ? 'catalog-glb' : 'primitive')
+    }
+  })
+
   it('returns undefined for unknown component', () => {
     expect(catalog.getComponent('nonexistent')).toBeUndefined()
   })

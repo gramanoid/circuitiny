@@ -72,11 +72,23 @@ export interface SimDef {
   inputPin?: string
 }
 
+export type CatalogTrustState = 'builtin' | 'user-installed' | 'ai-draft' | 'reviewed'
+export type CatalogRenderStrategy = 'catalog-glb' | 'primitive' | 'draft-glb' | 'generic-block'
+
+export interface CatalogMeta {
+  trust: CatalogTrustState
+  confidence?: 'high' | 'medium' | 'low'
+  sourceUrls?: string[]
+  renderStrategy?: CatalogRenderStrategy
+  reviewNotes?: string[]
+}
+
 export interface ComponentDef {
   id: string
   name: string
   version: string
   category: 'sensor' | 'actuator' | 'display' | 'input' | 'power' | 'misc'
+  family?: string
   model: string                         // .glb path relative to component dir
   scale?: number
   anchor?: [number, number, number]
@@ -87,6 +99,7 @@ export interface ComponentDef {
   sim?: SimDef
   docs?: { datasheetUrl?: string; notes?: string }
   idfVersion?: string                   // e.g. ">=5.0"
+  catalogMeta?: CatalogMeta
 }
 
 // Boards are components with extra MCU metadata.

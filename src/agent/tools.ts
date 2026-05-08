@@ -5,13 +5,35 @@ import { useStore } from '../store'
 import { catalog } from '../catalog'
 import { runDrc } from '../drc'
 import { resolvePin } from '../project/pins'
-import type { Project, Behavior, TriggerKind, Action } from '../project/schema'
+import type { Project, Behavior, TriggerKind, Action, PinType } from '../project/schema'
+import { getRecipe, getRecipeStep } from '../learning/recipes'
+import { summarizeViolationsForLearner } from '../learning/drcExplanations'
+import { recommendParts } from '../learning/partRecommendations'
+import type { ComponentDef, SchematicSymbol } from '../project/component'
+
+type PartRecommendation = ReturnType<typeof recommendParts>[number]
+const DRAFT_PIN_HORIZONTAL_SPACING_M = 0.003
+const DRAFT_PIN_Y_OFFSET_M = -0.004
+const VALID_DRAFT_PIN_TYPES: ReadonlySet<PinType> = new Set([
+  'power_in', 'power_out', 'ground',
+  'digital_io', 'digital_in', 'digital_out',
+  'analog_in', 'analog_out',
+  'i2c_sda', 'i2c_scl',
+  'spi_mosi', 'spi_miso', 'spi_sck', 'spi_cs',
+  'uart_tx', 'uart_rx',
+  'i2s_bclk', 'i2s_lrclk', 'i2s_din', 'i2s_dout',
+  'pwm', 'nc',
+])
 
 // Per-turn context threaded through the agent loop — tracks repeat failures and
 // carries an AbortSignal so long-running tools (fetch_url) can be cancelled.
-export type ExecContext = { failedCalls: Map<string, number>; signal?: AbortSignal }
+export type ExecContext = {
+  failedCalls: Map<string, number>
+  recommendedParts: Map<string, PartRecommendation>
+  signal?: AbortSignal
+}
 export function makeExecContext(signal?: AbortSignal): ExecContext {
-  return { failedCalls: new Map(), signal }
+  return { failedCalls: new Map(), recommendedParts: new Map(), signal }
 }
 
 export interface ToolDef {
@@ -285,6 +307,63 @@ export const tools: ToolDef[] = [
   {
     type: 'function',
     function: {
+      name: 'app_snapshot',
+      description: 'Return a compact snapshot of the currently rendered Circuitiny UI, including viewport size, device pixel ratio, and clickable/typeable elements with bounding boxes. Use with the attached screenshot before app_click/app_type/app_press_key. Internal agent-only tool; do not expose to untrusted or third-party callers.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'app_click',
+      description: 'Internal agent-only UI automation. element_index from app_snapshot takes precedence when present; otherwise x/y CSS coordinates are used. Synthetic events may not trigger user-gesture-only browser APIs; do not expose this API to untrusted or third-party callers.',
+      parameters: {
+        type: 'object',
+        properties: {
+          element_index: { type: 'number', description: 'Index from app_snapshot.elements.' },
+          x: { type: 'number', description: 'CSS pixel x coordinate relative to the app viewport.' },
+          y: { type: 'number', description: 'CSS pixel y coordinate relative to the app viewport.' },
+          click_count: { type: 'number', description: 'Number of clicks, default 1.' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'app_type',
+      description: 'Type text into the currently focused input/textarea/contenteditable element inside Circuitiny. Internal agent-only tool; synthetic events may differ from real gestures and must not be exposed to untrusted or third-party callers.',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: 'Literal text to enter.' },
+          replace: { type: 'boolean', description: 'If true, replace existing value/selection instead of appending. Default true.' }
+        },
+        required: ['text']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'app_press_key',
+      description: 'Press a key in the currently focused Circuitiny UI element, e.g. Enter, Escape, Tab, ArrowLeft, Backspace. Internal agent-only tool; synthetic events may differ from real gestures and must not be exposed to untrusted or third-party callers.',
+      parameters: {
+        type: 'object',
+        properties: {
+          key: { type: 'string' },
+          meta: { type: 'boolean' },
+          ctrl: { type: 'boolean' },
+          shift: { type: 'boolean' },
+          alt: { type: 'boolean' }
+        },
+        required: ['key']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'plan_circuit',
       description: 'Pre-flight check before building a circuit. Validates component IDs against the catalog, warns about missing companion parts (resistor for LED, pull-ups for I2C), and returns a curated list of safe GPIO pins for the current board. Call this before the first add_component.',
       parameters: {
@@ -301,8 +380,67 @@ export const tools: ToolDef[] = [
         required: ['goal', 'components']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'recommend_parts',
+      description: 'Recommend beginner-safe parts from a plain-English goal. Searches the local catalog first, then returns reviewed draft suggestions when the catalog does not cover the goal.',
+      parameters: {
+        type: 'object',
+        properties: {
+          goal: { type: 'string', description: 'What the learner wants to build, e.g. "tell when my plant needs water".' }
+        },
+        required: ['goal']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_draft_part',
+      description: 'Create an AI-draft catalog component from a recommend_parts result after explicit learner approval. This writes component.json only; the learner must review pins/rendering in Catalog Editor before trusting it.',
+      parameters: {
+        type: 'object',
+        properties: {
+          goal: { type: 'string', description: 'Same goal passed to recommend_parts.' },
+          recommendation_id: { type: 'string', description: 'Recommendation id returned by recommend_parts.' },
+          approved: { type: 'boolean', description: 'Must be true only after the learner explicitly approved draft creation.' }
+        },
+        required: ['goal', 'recommendation_id', 'approved']
+      }
+    }
   }
 ]
+
+export interface GetProjectResult {
+  beginnerGuidance: {
+    visible: boolean
+    recipeId: string
+    stepIndex: number
+    stepTitle: string
+    action: string
+    refs: string[]
+  } | null
+  drc: { beginnerSummary: string[] }
+}
+
+export interface RecommendPartsResult {
+  goal: string
+  recommendations: PartRecommendation[]
+}
+
+export interface CreateDraftPartResult {
+  componentId: string
+  savedTo?: string | null
+  catalogMeta?: ComponentDef['catalogMeta']
+  skipped?: 'already_in_catalog'
+}
+
+export interface RunDrcResult {
+  errors: number
+  warnings: number
+}
 
 export type ToolResult = { ok: true; data: unknown } | { ok: false; error: string }
 
@@ -333,18 +471,31 @@ export async function execTool(
 type Handler = (args: Record<string, any>, ctx?: ExecContext) => Promise<ToolResult>
 
 async function handleGetProject(): Promise<ToolResult> {
-  const { project } = useStore.getState()
+  const { project, activeRecipeId, recipeStepIndex, selected, guidanceVisible } = useStore.getState()
   const drc = runDrc(project)
+  const recipe = getRecipe(activeRecipeId)
+  const recipeStep = getRecipeStep(activeRecipeId, recipeStepIndex)
+  const allViolations = [...drc.errors, ...drc.warnings]
   return {
     ok: true,
     data: {
       board: project.board,
       target: project.target,
+      selected,
       components: project.components.map(c => ({ instance: c.instance, componentId: c.componentId })),
       nets: project.nets.map(n => ({ id: n.id, endpoints: n.endpoints })),
       behaviors: project.behaviors.map(b => ({ id: b.id, trigger: b.trigger.type, actions: b.actions.length })),
       drc: { errors: drc.errors.length, warnings: drc.warnings.length,
-             messages: [...drc.errors, ...drc.warnings].slice(0, 5) },
+             messages: allViolations.slice(0, 5),
+             beginnerSummary: summarizeViolationsForLearner(allViolations) },
+      beginnerGuidance: recipe && recipeStep ? {
+        visible: guidanceVisible,
+        recipeId: recipe.id,
+        stepIndex: recipeStepIndex,
+        stepTitle: recipeStep.title,
+        action: recipeStep.action,
+        refs: recipeStep.refs ?? [],
+      } : null,
       customFirmwareFiles: Object.keys(project.customCode ?? {}),
     }
   }
@@ -579,6 +730,210 @@ async function handleSaveProject(): Promise<ToolResult> {
   return { ok: true, data: { savedTo: path } }
 }
 
+type AppElement = {
+  index: number
+  tag: string
+  role: string | null
+  label: string
+  value?: string
+  box: { x: number; y: number; width: number; height: number }
+}
+
+function isVisibleElement(el: Element): boolean {
+  const rect = el.getBoundingClientRect()
+  if (rect.width < 2 || rect.height < 2) return false
+  const style = window.getComputedStyle(el)
+  return style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity) !== 0
+}
+
+function elementLabel(el: Element): string {
+  const placeholder = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el.placeholder : undefined
+  const value = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement
+    ? el.value
+    : undefined
+  const label = [
+    el.getAttribute('aria-label'),
+    el.getAttribute('title'),
+    placeholder,
+    value,
+    el.textContent,
+  ].find((v) => v && v.trim())
+  return (label ?? '').replace(/\s+/g, ' ').trim().slice(0, 160)
+}
+
+function appControlElements(): Element[] {
+  const selector = [
+    'button',
+    'input',
+    'textarea',
+    'select',
+    '[role="button"]',
+    '[role="tab"]',
+    '[contenteditable="true"]',
+    'canvas',
+    'svg',
+  ].join(',')
+  return Array.from(document.querySelectorAll(selector))
+    .filter(isVisibleElement)
+    .filter(isInteractiveControlElement)
+    .slice(0, 120)
+}
+
+// Treat large canvas/svg elements as interactive viewports while filtering tiny decorative icons.
+const MIN_INTERACTIVE_AREA_PX = 12_000
+const INTERACTIVE_ROLES = new Set(['button', 'tab', 'link', 'menuitem', 'checkbox', 'radio', 'switch', 'slider'])
+
+function isInteractiveControlElement(el: Element): boolean {
+  const tag = el.tagName.toLowerCase()
+  if (tag !== 'canvas' && tag !== 'svg') return true
+
+  const rect = el.getBoundingClientRect()
+  const style = window.getComputedStyle(el)
+  if (style.pointerEvents === 'none') return false
+  if (el.closest('button,a,[role="button"],[role="tab"]')) return false
+  const role = el.getAttribute('role')
+  if (role && INTERACTIVE_ROLES.has(role)) return true
+  if ((el as HTMLElement).tabIndex >= 0) return true
+  if ((el as HTMLElement).onclick || el.hasAttribute('onclick')) return true
+  if (el.getAttribute('aria-label') || el.getAttribute('title')) return true
+  return rect.width * rect.height >= MIN_INTERACTIVE_AREA_PX
+}
+
+function appElements(): AppElement[] {
+  return appControlElements()
+    .map((el, index) => {
+      const rect = el.getBoundingClientRect()
+      const value = 'value' in el ? String((el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value) : undefined
+      return {
+        index,
+        tag: el.tagName.toLowerCase(),
+        role: el.getAttribute('role'),
+        label: elementLabel(el),
+        ...(value ? { value: value.slice(0, 160) } : {}),
+        box: {
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        },
+      }
+    })
+}
+
+async function handleAppSnapshot(): Promise<ToolResult> {
+  return {
+    ok: true,
+    data: {
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      devicePixelRatio: window.devicePixelRatio,
+      activeElement: document.activeElement ? elementLabel(document.activeElement) : null,
+      elements: appElements(),
+    },
+  }
+}
+
+function targetFromArgs(args: Record<string, any>): Element | null {
+  if (args.element_index != null && Number.isFinite(Number(args.element_index))) {
+    // app_snapshot indices are live DOM positions; callers should click soon after the snapshot to avoid drift.
+    return appControlElements()[Number(args.element_index)] ?? null
+  }
+  if (Number.isFinite(Number(args.x)) && Number.isFinite(Number(args.y))) {
+    return document.elementFromPoint(Number(args.x), Number(args.y))
+  }
+  return null
+}
+
+function elementMetadata(el: Element) {
+  const rect = el.getBoundingClientRect()
+  return {
+    tag: el.tagName.toLowerCase(),
+    id: el.id || undefined,
+    classes: el instanceof HTMLElement ? Array.from(el.classList).slice(0, 6) : [],
+    box: {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    },
+  }
+}
+
+const APP_CLICK_EVENT_DELAY_MS = 12
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function handleAppClick(args: Record<string, any>): Promise<ToolResult> {
+  // Internal agent automation only: synthetic events can differ from real user gestures and should not back production UI behavior.
+  const el = targetFromArgs(args)
+  if (!el) return { ok: false, error: 'No clickable target found. Call app_snapshot and pass element_index, or pass x/y CSS coordinates.' }
+  const rect = el.getBoundingClientRect()
+  const x = Number.isFinite(Number(args.x)) ? Number(args.x) : rect.left + rect.width / 2
+  const y = Number.isFinite(Number(args.y)) ? Number(args.y) : rect.top + rect.height / 2
+  const count = Math.max(1, Number(args.click_count ?? 1))
+  ;(el as HTMLElement).focus()
+  for (let i = 0; i < count; i++) {
+    const eventInit = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 }
+    el.dispatchEvent(new MouseEvent('pointerdown', eventInit))
+    await sleep(APP_CLICK_EVENT_DELAY_MS)
+    el.dispatchEvent(new MouseEvent('mousedown', eventInit))
+    el.dispatchEvent(new MouseEvent('pointerup', eventInit))
+    await sleep(APP_CLICK_EVENT_DELAY_MS)
+    el.dispatchEvent(new MouseEvent('mouseup', eventInit))
+    el.dispatchEvent(new MouseEvent('click', eventInit))
+  }
+  return { ok: true, data: { clicked: elementLabel(el), element: elementMetadata(el), x: Math.round(x), y: Math.round(y) } }
+}
+
+async function handleAppType(args: Record<string, any>): Promise<ToolResult> {
+  const el = document.activeElement as HTMLElement | null
+  if (!el) return { ok: false, error: 'No focused element. Call app_click on an input first.' }
+  const text = String(args.text ?? '')
+  const replace = args.replace !== false
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    el.value = replace ? text : el.value + text
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    return { ok: true, data: { typed: text.length, target: elementLabel(el) } }
+  }
+  if (el.isContentEditable) {
+    const selection = window.getSelection()
+    const selectedRange = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null
+    const range = selectedRange && el.contains(selectedRange.commonAncestorContainer)
+      ? selectedRange
+      : document.createRange()
+    if (!selectedRange || !el.contains(selectedRange.commonAncestorContainer)) {
+      range.selectNodeContents(el)
+      range.collapse(false)
+    }
+    if (replace) range.selectNodeContents(el)
+    range.deleteContents()
+    range.insertNode(document.createTextNode(text))
+    range.collapse(false)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }))
+    return { ok: true, data: { typed: text.length, target: elementLabel(el) } }
+  }
+  return { ok: false, error: `Focused element is not typeable: ${el.tagName.toLowerCase()}.` }
+}
+
+async function handleAppPressKey(args: Record<string, any>): Promise<ToolResult> {
+  const key = String(args.key ?? '')
+  if (!key) return { ok: false, error: 'key is required.' }
+  const target = (document.activeElement as HTMLElement | null) ?? document.body
+  const init: KeyboardEventInit = {
+    key,
+    bubbles: true,
+    cancelable: true,
+    metaKey: !!args.meta,
+    ctrlKey: !!args.ctrl,
+    shiftKey: !!args.shift,
+    altKey: !!args.alt,
+  }
+  target.dispatchEvent(new KeyboardEvent('keydown', init))
+  target.dispatchEvent(new KeyboardEvent('keyup', init))
+  return { ok: true, data: { key, target: elementLabel(target) || target.tagName.toLowerCase() } }
+}
+
 async function handleFetchUrl(args: Record<string, any>, ctx?: ExecContext): Promise<ToolResult> {
   const url = args.url as string
   try {
@@ -697,6 +1052,128 @@ async function handleListGlbModels(): Promise<ToolResult> {
   return { ok: true, data: { boards, components } }
 }
 
+function recommendationCacheKey(goal: string, recommendationId: string): string {
+  return `${recommendationGoalCachePrefix(goal)}${recommendationId}`
+}
+
+function recommendationGoalCachePrefix(goal: string): string {
+  return `${goal}::`
+}
+
+async function handleRecommendParts(args: Record<string, any>, ctx?: ExecContext): Promise<ToolResult> {
+  const goal = String(args.goal ?? '').trim()
+  if (!goal) return { ok: false, error: 'recommend_parts requires a non-empty goal.' }
+  const recommendations = recommendParts(goal)
+  if (ctx) {
+    const prefix = recommendationGoalCachePrefix(goal)
+    for (const key of ctx.recommendedParts.keys()) {
+      if (key.startsWith(prefix)) ctx.recommendedParts.delete(key)
+    }
+    for (const rec of recommendations) ctx.recommendedParts.set(recommendationCacheKey(goal, rec.id), rec)
+  }
+  return { ok: true, data: { goal, recommendations } }
+}
+
+async function handleCreateDraftPart(args: Record<string, any>, ctx?: ExecContext): Promise<ToolResult> {
+  if (args.approved !== true) {
+    return { ok: false, error: 'create_draft_part requires approved: true after explicit learner approval.' }
+  }
+  const goal = String(args.goal ?? '').trim()
+  const recommendationId = String(args.recommendation_id ?? '').trim()
+  if (!goal || !recommendationId) return { ok: false, error: 'goal and recommendation_id are required.' }
+  const rec = ctx?.recommendedParts.get(recommendationCacheKey(goal, recommendationId))
+  if (!rec) return { ok: false, error: `No recommendation "${recommendationId}" found for goal "${goal}". Call recommend_parts again.` }
+  if (rec.source === 'local-catalog' && rec.catalogMatchId) {
+    return { ok: true, data: { componentId: rec.catalogMatchId, skipped: 'already_in_catalog' } }
+  }
+
+  const component = draftComponentFromRecommendation(rec)
+  const json = JSON.stringify(component, null, 2)
+  let dir: string | null = null
+  const api = typeof window !== 'undefined' ? window.espAI : undefined
+  if (api?.writeComponentJson) {
+    try {
+      dir = await api.writeComponentJson(component.id, json)
+      if (!dir) return { ok: false, error: 'Failed to persist component: writeComponentJson returned no destination.' }
+    } catch (err) {
+      return { ok: false, error: `Failed to persist component: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  }
+  catalog.registerComponent(component)
+  useStore.getState().bumpCatalog()
+  return { ok: true, data: { componentId: component.id, savedTo: dir, catalogMeta: component.catalogMeta } }
+}
+
+function draftComponentFromRecommendation(rec: ReturnType<typeof recommendParts>[number]): ComponentDef {
+  const pinReviewNotes: string[] = []
+  const pins = rec.importantPins.map((p, i) => ({
+    id: p.id,
+    label: p.label,
+    type: normalizeDraftPinType(p.type, rec.id, pinReviewNotes),
+    position: [
+      (i - (rec.importantPins.length - 1) / 2) * DRAFT_PIN_HORIZONTAL_SPACING_M,
+      DRAFT_PIN_Y_OFFSET_M,
+      0,
+    ] as [number, number, number],
+    normal: [0, -1, 0] as [number, number, number],
+  }))
+  const reviewNotes = [
+    `Draft created from goal: ${rec.beginnerBuild}`,
+    'Review pin labels, voltage, and render before promoting.',
+    'No 3D model assigned; add a GLB file in Catalog Editor for visualization.',
+    ...(pins.length === 0 ? ['No pins detected; verify the part pinout before wiring.'] : []),
+    ...pinReviewNotes,
+  ]
+  return {
+    id: rec.id,
+    name: rec.label,
+    version: '0.1.0',
+    category: categoryFromFamily(rec.family),
+    model: '',
+    scale: 1,
+    pins,
+    schematic: { symbol: symbolFromFamily(rec.family) },
+    catalogMeta: {
+      trust: 'ai-draft',
+      confidence: rec.confidence,
+      sourceUrls: rec.sourceLinks,
+      renderStrategy: rec.renderStrategy,
+      reviewNotes,
+    },
+    docs: {
+      notes: [
+        rec.explanation,
+        rec.voltageCaution,
+        rec.currentCaution,
+      ].filter(Boolean).join(' '),
+    },
+  }
+}
+
+function normalizeDraftPinType(type: string, componentId: string, reviewNotes: string[]): PinType {
+  if (VALID_DRAFT_PIN_TYPES.has(type as PinType)) return type as PinType
+  reviewNotes.push(`Pin type "${type}" on ${componentId} was normalized to digital_io; verify against the datasheet.`)
+  return 'digital_io'
+}
+
+function categoryFromFamily(family: string): ComponentDef['category'] {
+  const f = family.toLowerCase().trim()
+  if (f.includes('display')) return 'display'
+  if (f.includes('sensor')) return 'sensor'
+  if (f.includes('input')) return 'input'
+  if (f.includes('indicator')) return 'actuator'
+  return 'misc'
+}
+
+function symbolFromFamily(family: string): SchematicSymbol {
+  const f = family.toLowerCase().trim()
+  if (f.includes('display')) return 'display'
+  if (f.includes('sensor')) return 'sensor'
+  if (f.includes('input')) return 'button'
+  if (f.includes('indicator')) return 'led'
+  return 'generic-rect'
+}
+
 const HANDLERS: Record<string, Handler> = {
   get_project:      () => handleGetProject(),
   list_catalog:     () => handleListCatalog(),
@@ -716,7 +1193,13 @@ const HANDLERS: Record<string, Handler> = {
   think:            () => Promise.resolve({ ok: true, data: { logged: true } }),
   fetch_url:        (args, ctx) => handleFetchUrl(args, ctx),
   list_glb_models:  () => handleListGlbModels(),
+  app_snapshot:     () => handleAppSnapshot(),
+  app_click:        (args) => handleAppClick(args),
+  app_type:         (args) => handleAppType(args),
+  app_press_key:    (args) => handleAppPressKey(args),
   plan_circuit:     (args) => handlePlanCircuit(args),
+  recommend_parts:  (args, ctx) => handleRecommendParts(args, ctx),
+  create_draft_part:(args, ctx) => handleCreateDraftPart(args, ctx),
 }
 
 async function executeInternal(

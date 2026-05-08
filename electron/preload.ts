@@ -10,6 +10,8 @@ const api = {
     ipcRenderer.invoke('pickComponent'),
   writeBundle: (id: string, glbName: string, glbData: Uint8Array, jsonText: string): Promise<string> =>
     ipcRenderer.invoke('writeBundle', id, glbName, glbData, jsonText),
+  writeComponentJson: (id: string, jsonText: string): Promise<string> =>
+    ipcRenderer.invoke('writeComponentJson', id, jsonText),
   listCatalog: (): Promise<Array<{ id: string; json: any; glbData: Uint8Array | null }>> =>
     ipcRenderer.invoke('listCatalog'),
 
@@ -62,6 +64,16 @@ const api = {
     model: string
   }): Promise<{ ok: boolean; text?: string; error?: string }> =>
     ipcRenderer.invoke('claudeCodeChat', opts),
+  codexChat: (opts: {
+    runId?: string
+    prompt: string
+    model: string
+    reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+    includeScreenshot?: boolean
+  }): Promise<{ ok: boolean; text?: string; error?: string }> =>
+    ipcRenderer.invoke('codexChat', opts),
+  codexStop: (runId: string): Promise<{ ok: boolean; reason?: string }> =>
+    ipcRenderer.invoke('codexStop', runId),
 }
 
 contextBridge.exposeInMainWorld('espAI', api)

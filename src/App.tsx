@@ -8,6 +8,7 @@ import CatalogEditor3D from './panes/CatalogEditor3D'
 import CatalogEditorPanel from './panes/CatalogEditorPanel'
 import Palette from './panes/Palette'
 import BoardPicker from './panes/BoardPicker'
+import LearningPanel from './panes/LearningPanel'
 import { useStore } from './store'
 import { hydrateCatalog } from './catalog/hydrate'
 import { useSimLoop } from './sim/useSimLoop'
@@ -91,7 +92,12 @@ function ProjectMode() {
   return (
     <PanelGroup direction="horizontal" autoSaveId="circuitiny:project">
       <Panel defaultSize={15} minSize={10} maxSize={30}>
-        <PaneFrame title="Palette"><Palette /></PaneFrame>
+        <PaneFrame title="Palette" noPad>
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <LearningPanel />
+            <div style={{ flex: 1, minHeight: 0 }}><Palette /></div>
+          </div>
+        </PaneFrame>
       </Panel>
       <ResizeH />
       <Panel defaultSize={60} minSize={20}>

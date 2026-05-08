@@ -76,6 +76,10 @@ export default function BuildPane() {
   }
 
   const busy = status === 'running'
+  const recovery = useMemo(() => {
+    if (status !== 'error') return null
+    return buildRecoveryHint(log.slice(-100).map((l) => l.text).join('\n'))
+  }, [status, log])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontSize: 11 }}>
@@ -101,6 +105,22 @@ export default function BuildPane() {
         </div>
       </div>
 
+      {recovery && (
+        <div style={{
+          margin: 8,
+          padding: 8,
+          border: '1px solid #4a3320',
+          borderRadius: 4,
+          background: '#17110b',
+          color: '#f0c27a',
+          whiteSpace: 'normal',
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+          lineHeight: 1.4,
+        }}>
+          <b>Beginner recovery:</b> {recovery}
+        </div>
+      )}
+
       <div ref={logRef} style={{
         flex: 1, overflow: 'auto', padding: 8, fontFamily: "'SF Mono', Menlo, monospace",
         fontSize: 11, lineHeight: 1.4, background: '#0a0a0a', whiteSpace: 'pre-wrap'
@@ -116,6 +136,35 @@ export default function BuildPane() {
       </div>
     </div>
   )
+}
+
+const TARGET_MISMATCH_REGEX = /\b(target mismatch|wrong target|mismatched target|sdkconfig target|sdkconfig mismatch)\b/
+
+// Recovery text is matched against ESP-IDF v5.5.4 and esptool.py v4.12.dev1-style logs.
+// Refresh these heuristics if future tool releases change their error wording.
+function buildRecoveryHint(text: string): string {
+  const lower = text.toLowerCase()
+  if (lower.includes('idf.py') && (lower.includes('not found') || lower.includes('enoent'))) {
+    return 'ESP-IDF is not available to the app. Check that CIRCUITINY_IDF_PATH points to your ESP-IDF folder, then restart Circuitiny.'
+  }
+  if (lower.includes('no such file or directory') && lower.includes('esp-idf')) {
+    return 'Circuitiny could not find the ESP-IDF install. Re-run ESP-IDF setup or set CIRCUITINY_IDF_PATH to the installed path.'
+  }
+  if (lower.includes('failed to connect') || lower.includes('timed out') || lower.includes('timeout')) {
+    return 'The board did not answer during flashing. Press and hold BOOT, click Flash again, then release BOOT when writing starts.'
+  }
+  if (
+    (lower.includes('serial') && (lower.includes('error') || lower.includes('failed'))) ||
+    (lower.includes('port') && lower.includes('not found')) ||
+    lower.includes('could not open serial') ||
+    lower.includes('no device found')
+  ) {
+    return 'Check the USB cable, pick the correct serial port, and hold BOOT while flashing if the board does not enter bootloader mode automatically.'
+  }
+  if (TARGET_MISMATCH_REGEX.test(lower)) {
+    return 'The selected board target may not match the generated project. Confirm the board in the project and run Clean before building again.'
+  }
+  return 'Read the first red error line above, fix that cause, then build again. The raw log is preserved so you can share the exact failure with Codex.'
 }
 
 function statusLabel(s: Status, op: Op | null): string {

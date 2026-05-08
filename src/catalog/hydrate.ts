@@ -1,7 +1,26 @@
 // Loads user-added components from ~/.circuitiny/catalog/ into the in-memory catalog.
 
 import { catalog } from './index'
-import type { ComponentDef, SchematicSymbolSpec, SchematicSymbol, SimDef } from '../project/component'
+import type { CatalogMeta, ComponentDef, SchematicSymbolSpec, SchematicSymbol, SimDef } from '../project/component'
+
+const CATALOG_TRUST: Array<CatalogMeta['trust']> = ['builtin', 'ai-draft', 'user-installed', 'reviewed']
+const CATALOG_CONFIDENCE: Array<NonNullable<CatalogMeta['confidence']>> = ['high', 'medium', 'low']
+const CATALOG_RENDER_STRATEGY: Array<NonNullable<CatalogMeta['renderStrategy']>> = ['catalog-glb', 'draft-glb', 'primitive', 'generic-block']
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+}
+
+function isValidCatalogMeta(meta: unknown): meta is CatalogMeta {
+  if (!meta || typeof meta !== 'object') return false
+  const m = meta as CatalogMeta
+  if (!CATALOG_TRUST.includes(m.trust)) return false
+  if (m.confidence !== undefined && !CATALOG_CONFIDENCE.includes(m.confidence)) return false
+  if (m.renderStrategy !== undefined && !CATALOG_RENDER_STRATEGY.includes(m.renderStrategy)) return false
+  if (m.sourceUrls !== undefined && !isStringArray(m.sourceUrls)) return false
+  if (m.reviewNotes !== undefined && !isStringArray(m.reviewNotes)) return false
+  return true
+}
 
 // Heuristic fallback for user catalog entries whose component.json predates
 // the `schematic.symbol` field.
@@ -31,6 +50,7 @@ export async function hydrateCatalog(): Promise<number> {
       name: j.name ?? j.id,
       version: j.version ?? '0.1.0',
       category: j.category ?? 'misc',
+      family: typeof j.family === 'string' ? j.family : undefined,
       model: j.model ?? 'model.glb',
       scale: typeof j.scale === 'number' ? j.scale : 1,
       pins: j.pins.map((p: any) => ({
@@ -39,6 +59,11 @@ export async function hydrateCatalog(): Promise<number> {
         position: p.position, normal: p.normal ?? [0, 1, 0]
       })),
       schematic: j.schematic ?? inferSchematic(j.id),
+      catalogMeta: isValidCatalogMeta(j.catalogMeta) ? j.catalogMeta : {
+        trust: 'user-installed',
+        confidence: 'medium',
+        renderStrategy: typeof j.model === 'string' && j.model.trim() ? 'catalog-glb' : 'generic-block',
+      },
       ...(j.sim ? { sim: j.sim as SimDef } : {})
     }
     catalog.registerComponent(def, e.glbData)

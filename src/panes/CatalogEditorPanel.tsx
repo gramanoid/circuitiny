@@ -1,5 +1,8 @@
-import { useStore, type DraftPin, type Category } from '../store'
+import { useMemo } from 'react'
+import { useStore, type CatalogDraft, type DraftPin, type Category } from '../store'
 import type { PinType } from '../project/schema'
+import type { CatalogMeta, ComponentDef } from '../project/component'
+import { catalogReviewWarnings, promoteCatalogMeta } from '../catalog/rendering'
 
 const PIN_TYPES: PinType[] = [
   'power_in', 'power_out', 'ground',
@@ -11,6 +14,26 @@ const PIN_TYPES: PinType[] = [
 ]
 
 const CATEGORIES: Category[] = ['sensor', 'actuator', 'display', 'input', 'power', 'misc']
+const TRUST_OPTIONS: CatalogMeta['trust'][] = ['builtin', 'ai-draft', 'user-installed', 'reviewed']
+const CONFIDENCE_OPTIONS: Array<NonNullable<CatalogMeta['confidence']>> = ['high', 'medium', 'low']
+const RENDER_OPTIONS: Array<NonNullable<CatalogMeta['renderStrategy']>> = ['catalog-glb', 'primitive', 'generic-block']
+
+function lines(value: string): string[] {
+  return value.split('\n').map((s) => s.trim()).filter(Boolean)
+}
+
+function draftToComponent(draft: CatalogDraft): ComponentDef {
+  return {
+    id: draft.id || 'draft-part',
+    name: draft.name || draft.id || 'Draft part',
+    version: '0.1.0',
+    category: draft.category,
+    model: draft.glbName ?? '',
+    scale: draft.scale,
+    pins: draft.pins.map(({ id, label, type, position, normal }) => ({ id, label, type, position, normal })),
+    catalogMeta: draft.catalogMeta,
+  }
+}
 
 export default function CatalogEditorPanel() {
   const draft = useStore((s) => s.draft)
@@ -21,6 +44,14 @@ export default function CatalogEditorPanel() {
   const removePin = useStore((s) => s.removeDraftPin)
   const selectPin = useStore((s) => s.selectDraftPin)
   const reset = useStore((s) => s.resetDraft)
+  const hasGlb = !!draft.glbData && !!draft.glbName
+  const draftComponent = useMemo(() => draftToComponent(draft), [draft])
+  const reviewWarnings = useMemo(() => catalogReviewWarnings(draftComponent, hasGlb), [draftComponent, hasGlb])
+  const promotedMeta = useMemo(() => promoteCatalogMeta(draft.catalogMeta, hasGlb), [draft.catalogMeta, hasGlb])
+
+  function updateCatalogMeta(patch: Partial<CatalogMeta>) {
+    setMeta({ catalogMeta: { ...(draft.catalogMeta ?? {}), ...patch } })
+  }
 
   async function pick() {
     const r = await window.espAI.pickGlb()
@@ -42,6 +73,11 @@ export default function CatalogEditorPanel() {
         glbName: r.glbName,
         glbData: r.glbData,
         scale: typeof j.scale === 'number' ? j.scale : 1,
+        catalogMeta: j.catalogMeta ?? {
+          trust: 'user-installed',
+          confidence: 'medium',
+          renderStrategy: r.glbData ? 'catalog-glb' : 'primitive',
+        },
         pins: Array.isArray(j.pins) ? j.pins.map((p: any): DraftPin => ({
           id: p.id, label: p.label ?? p.id,
           type: p.type ?? 'digital_io',
@@ -54,21 +90,22 @@ export default function CatalogEditorPanel() {
 
   async function exportBundle() {
     if (!draft.id) { alert('Set an id first'); return }
-    if (!draft.glbData || !draft.glbName) { alert('Load a .glb first'); return }
+    const catalogMeta = promotedMeta
     const out = {
       id: draft.id,
       name: draft.name || draft.id,
       version: '0.1.0',
       category: draft.category,
-      model: draft.glbName,
+      model: hasGlb ? draft.glbName : '',
       scale: draft.scale,
+      catalogMeta,
       pins: draft.pins.map(({ id, label, type, position, normal }) => ({
         id, label, type, position, normal
       }))
     }
-    const dir = await window.espAI.writeBundle(
-      draft.id, draft.glbName, draft.glbData, JSON.stringify(out, null, 2)
-    )
+    const dir = hasGlb
+      ? await window.espAI.writeBundle(draft.id, draft.glbName!, draft.glbData!, JSON.stringify(out, null, 2))
+      : await window.espAI.writeComponentJson(draft.id, JSON.stringify(out, null, 2))
     alert(`Saved bundle to ${dir}`)
   }
 
@@ -102,6 +139,58 @@ export default function CatalogEditorPanel() {
         </Field>
       </section>
 
+      <section style={{ padding: 8, border: '1px solid #2b2b2b', borderRadius: 6, background: '#161616' }}>
+        <div style={{ color: '#aaa', fontSize: 11, fontWeight: 600, marginBottom: 6 }}>
+          Review status
+        </div>
+        <Field label="Current trust">
+          <select value={draft.catalogMeta?.trust ?? 'user-installed'}
+                  onChange={(e) => updateCatalogMeta({ trust: e.target.value as CatalogMeta['trust'] })}
+                  style={inputStyle}>
+            {TRUST_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </Field>
+        <Field label="Confidence">
+          <select value={draft.catalogMeta?.confidence ?? 'medium'}
+                  onChange={(e) => updateCatalogMeta({ confidence: e.target.value as NonNullable<CatalogMeta['confidence']> })}
+                  style={inputStyle}>
+            {CONFIDENCE_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Field>
+        <Field label="Render">
+          <select value={draft.catalogMeta?.renderStrategy ?? (hasGlb ? 'catalog-glb' : 'primitive')}
+                  onChange={(e) => updateCatalogMeta({ renderStrategy: e.target.value as NonNullable<CatalogMeta['renderStrategy']> })}
+                  style={inputStyle}>
+            {RENDER_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </Field>
+        <Field label="Source links">
+          <textarea value={(draft.catalogMeta?.sourceUrls ?? []).join('\n')}
+                    onChange={(e) => updateCatalogMeta({ sourceUrls: lines(e.target.value) })}
+                    placeholder="https://datasheet.example/part.pdf"
+                    rows={2}
+                    style={{ ...inputStyle, resize: 'vertical' }} />
+        </Field>
+        <Field label="Review notes">
+          <textarea value={(draft.catalogMeta?.reviewNotes ?? []).join('\n')}
+                    onChange={(e) => updateCatalogMeta({ reviewNotes: lines(e.target.value) })}
+                    rows={2}
+                    style={{ ...inputStyle, resize: 'vertical' }} />
+        </Field>
+        <div style={{ color: '#6688aa', fontSize: 10, lineHeight: 1.4 }}>
+          Export promotes this part as reviewed with {promotedMeta.renderStrategy} rendering.
+        </div>
+        {reviewWarnings.length > 0 && (
+          <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {reviewWarnings.map((warning, idx) => (
+              <div key={`${idx}:${warning}`} style={{ color: '#d0b36a', fontSize: 10, lineHeight: 1.35 }}>
+                {warning}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       <section>
         <button onClick={pick} style={btnStyle}>{draft.glbName ? '↻ Replace .glb' : '⤓ Load .glb'}</button>
         {draft.glbName && <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>{draft.glbName}</div>}
@@ -122,7 +211,7 @@ export default function CatalogEditorPanel() {
 
       <section>
         <button onClick={exportBundle} style={{ ...btnStyle, width: '100%' }}>
-          💾 Export bundle (.glb + .json)
+          💾 Export reviewed part
         </button>
       </section>
     </div>

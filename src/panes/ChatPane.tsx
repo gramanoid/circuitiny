@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { marked } from 'marked'
 import { chat } from '../agent/chat'
 import type { Msg } from '../agent/types'
-import { PROVIDER_DEFAULTS, type ProviderType } from '../agent/types'
+import { PROVIDER_DEFAULTS, type ProviderConfig, type ProviderType } from '../agent/types'
 import { loadChatHistory, saveChatHistory, clearChatHistory } from '../agent/chatSession'
 import { useStore } from '../store'
 
@@ -16,6 +16,9 @@ const STARTER_PROMPTS = [
   'Build a traffic light with red, yellow, and green LEDs',
 ]
 
+type ReasoningEffort = NonNullable<ProviderConfig['reasoningEffort']>
+const REASONING_EFFORTS: ReasoningEffort[] = ['minimal', 'low', 'medium', 'high', 'xhigh']
+
 function loadCfg() {
   try { return JSON.parse(localStorage.getItem(LS_KEY) ?? '{}') } catch { return {} }
 }
@@ -23,14 +26,16 @@ function saveCfg(o: object) { localStorage.setItem(LS_KEY, JSON.stringify(o)) }
 
 const FALLBACK_MODELS: Record<ProviderType, string[]> = {
   ollama:      [],
-  openai:      ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
+  openai:      [PROVIDER_DEFAULTS.openai.defaultModel],
   anthropic:   ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'],
   openrouter:  ['anthropic/claude-sonnet-4-6', 'openai/gpt-4o', 'meta-llama/llama-3.3-70b-instruct', 'google/gemini-2.5-flash'],
   claudecode:  ['sonnet', 'opus', 'haiku'],
+  codexcli:    [PROVIDER_DEFAULTS.codexcli.defaultModel],
 }
 
 async function fetchModels(provider: ProviderType, apiKey: string, baseUrl: string): Promise<string[]> {
   if (provider === 'claudecode') return FALLBACK_MODELS.claudecode
+  if (provider === 'codexcli') return FALLBACK_MODELS.codexcli
   try {
     const sig = AbortSignal.timeout(5000)
     if (provider === 'ollama') {
@@ -81,6 +86,7 @@ export default function ChatPane() {
   const [model, setModel]           = useState<string>(saved.model ?? PROVIDER_DEFAULTS.ollama.defaultModel)
   const [apiKey, setApiKey]         = useState<string>(saved.apiKey ?? '')
   const [baseUrl, setBaseUrl]       = useState<string>(saved.baseUrl ?? '')
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(saved.reasoningEffort ?? 'medium')
   const [showCfg, setShowCfg]       = useState(false)
   const [expertMode, setExpertMode] = useState<boolean>(() => localStorage.getItem(LS_EXPERT) === 'true')
   const [dynamicModels, setDynamicModels] = useState<string[]>([])
@@ -108,12 +114,13 @@ export default function ChatPane() {
     setDynamicModels([])
     fetchModels(provider, apiKey, baseUrl).then((list) => {
       setDynamicModels(list)
-      if (list.length > 0 && !list.includes(model)) {
-        setModel(list[0])
-        saveCfg({ provider, model: list[0], apiKey, baseUrl })
-      }
+      setModel((current) => (list.length > 0 && !list.includes(current)) ? list[0] : current)
     })
   }, [provider, apiKey, baseUrl])
+
+  useEffect(() => {
+    saveCfg({ provider, model, apiKey, baseUrl, reasoningEffort })
+  }, [provider, model, apiKey, baseUrl, reasoningEffort])
 
   // Persist history whenever messages change (strip streaming markers before saving)
   useEffect(() => {
@@ -127,22 +134,22 @@ export default function ChatPane() {
     const m = FALLBACK_MODELS[p][0] ?? ''
     setModel(m)
     setBaseUrl('')
-    saveCfg({ provider: p, model: m, apiKey, baseUrl: '' })
   }
 
   function onModelChange(m: string) {
     setModel(m)
-    saveCfg({ provider, model: m, apiKey, baseUrl })
   }
 
   function onKeyChange(k: string) {
     setApiKey(k)
-    saveCfg({ provider, model, apiKey: k, baseUrl })
   }
 
   function onBaseUrlChange(u: string) {
     setBaseUrl(u)
-    saveCfg({ provider, model, apiKey, baseUrl: u })
+  }
+
+  function onReasoningEffortChange(effort: ReasoningEffort) {
+    setReasoningEffort(effort)
   }
 
   function toggleExpert() {
@@ -208,6 +215,7 @@ export default function ChatPane() {
         model,
         apiKey: apiKey || undefined,
         baseUrl: baseUrl || defaults.baseUrl,
+        reasoningEffort,
         expertMode,
         signal: ac.signal,
       })
@@ -241,6 +249,16 @@ export default function ChatPane() {
           {(dynamicModels.length > 0 ? dynamicModels : [model])
             .map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
+
+        {provider === 'codexcli' && (
+          <select value={reasoningEffort} onChange={(e) => onReasoningEffortChange(e.target.value as ReasoningEffort)}
+                  title="GPT reasoning effort"
+                  style={{ ...inputStyle, width: 72 }}>
+            {REASONING_EFFORTS.map((effort) => (
+              <option key={effort} value={effort}>{effort}</option>
+            ))}
+          </select>
+        )}
 
         <button onClick={toggleExpert}
                 title={expertMode ? 'Expert mode ON — click to disable' : 'Enable expert mode (deep research loop)'}

@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-05-08
+description: |
+  Adds Codex CLI integration, beginner learning flows, guided recipes,
+  local part discovery, catalog review metadata, and primitive rendering.

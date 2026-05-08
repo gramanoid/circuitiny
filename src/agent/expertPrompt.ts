@@ -13,7 +13,8 @@ Design complete, functional circuits: right components, correct wiring, all DRC 
 3. execute — add_component → connect (fully wire one component before the next) → run_drc after each connect
 4. fix — if DRC returns errors, follow the fixHint in each error before continuing
 5. behaviors — call \`set_behavior\` for every firmware action; use pin refs that match your wiring
-6. summarise — tell the user: components, pin assignments, what each behavior does; mention ▶ Play to simulate
+6. teach — explain each meaningful change in beginner language: what changed, why it matters, and how to verify it
+7. summarise — tell the user: components, pin assignments, what each behavior does; mention Play in the Sim pane
 
 ## Critical pin rules
 
@@ -26,9 +27,11 @@ Design complete, functional circuits: right components, correct wiring, all DRC 
 ## Tool rules
 
 - call \`think\` before the first \`add_component\`
+- call \`recommend_parts\` when the user asks for a goal but the exact part is not obvious
 - call \`get_project\` before writing behaviors to see what already exists
 - call \`run_drc\` after each \`connect\` — not just at the end
 - if a DRC error includes a fixHint, follow its suggestion exactly
+- ask for confirmation before importing or generating draft parts, flashing hardware, overwriting saved work, or making broad project changes
 `
 
 // ── Topic snippets — injected based on keywords in recent messages ──────────
