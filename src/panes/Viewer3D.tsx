@@ -22,13 +22,23 @@ function PinAnchor({ pin, owner, position, color, glow, onClick }: {
   glow: number
   onClick: () => void
 }) {
+  const isBoardPin = owner === 'board'
+  const stemY = pin.normal[1] >= 0 ? 0.0007 : -0.0007
+  const capY = pin.normal[1] >= 0 ? 0.0014 : -0.0014
   return (
     <group position={position}>
-      <mesh renderOrder={10}
-            onClick={(e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); onClick() }}>
-        <sphereGeometry args={[0.0012, 12, 12]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={glow}
-                              depthTest={false} depthWrite={false} />
+      <mesh onClick={(e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); onClick() }}>
+        <sphereGeometry args={[0.002, 12, 12]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+      <mesh position={[0, stemY, 0]} castShadow>
+        <cylinderGeometry args={[isBoardPin ? 0.00045 : 0.00032, isBoardPin ? 0.00045 : 0.00032, isBoardPin ? 0.0014 : 0.0022, 10]} />
+        <meshStandardMaterial color={isBoardPin ? '#1b1b1b' : '#c8c8c8'} metalness={isBoardPin ? 0.25 : 0.85} roughness={0.28} />
+      </mesh>
+      <mesh position={[0, capY, 0]} renderOrder={10}>
+        <sphereGeometry args={[isBoardPin ? 0.00062 : 0.00055, 12, 8]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={glow > 0.5 ? glow : 0.08}
+                              transparent opacity={isBoardPin ? 0.86 : 0.72} />
       </mesh>
       {glow > 0.5 && (
         <Html distanceFactor={0.1} style={{ pointerEvents: 'none' }}>
@@ -65,8 +75,9 @@ function BoardMesh({ board }: { board: import('../project/component').BoardDef }
   // Unique z values → one header rail per unique z (left / right long edges)
   const uniqueZ = [...new Set(zs.map((z) => Math.round(z * 10000) / 10000))]
 
-  // USB stub at the -x end (anti-USB end is +x for DevKitC convention,
-  // but we have no orientation info — place it at the -x end as a placeholder)
+  const boardColor = board.id.includes('xiao') ? '#1c2430' : '#1f5a44'
+  const moduleX = cx + pcbW * 0.12
+  const usbW = board.id.includes('xiao') ? 0.006 : 0.009
   const usbX = minX - 0.004
 
   return (
@@ -74,24 +85,78 @@ function BoardMesh({ board }: { board: import('../project/component').BoardDef }
       {/* PCB body */}
       <mesh position={[cx, 0.005, cz]} castShadow receiveShadow>
         <boxGeometry args={[pcbW, 0.0016, pcbD]} />
-        <meshStandardMaterial color="#1f4f3a" roughness={0.6} />
+        <meshStandardMaterial color={boardColor} roughness={0.58} />
+      </mesh>
+      <mesh position={[cx, 0.006, cz]} receiveShadow>
+        <boxGeometry args={[pcbW * 0.96, 0.00025, pcbD * 0.86]} />
+        <meshStandardMaterial color="#2b7a5b" roughness={0.64} transparent opacity={0.36} />
       </mesh>
       {/* USB connector stub */}
       <mesh position={[usbX, 0.009, cz]} castShadow>
-        <boxGeometry args={[0.008, 0.006, 0.008]} />
-        <meshStandardMaterial color="#aaa" metalness={0.8} roughness={0.3} />
+        <boxGeometry args={[usbW, 0.0032, 0.0075]} />
+        <meshStandardMaterial color="#b7bbc0" metalness={0.85} roughness={0.22} />
       </mesh>
-      {/* Module shield can — approximate, centered on PCB */}
-      <mesh position={[cx + pcbW * 0.1, 0.008, cz]} castShadow>
-        <boxGeometry args={[pcbW * 0.38, 0.003, pcbD * 0.65]} />
-        <meshStandardMaterial color="#ddd" metalness={0.85} roughness={0.3} />
+      <mesh position={[usbX - usbW * 0.51, 0.009, cz]} castShadow>
+        <boxGeometry args={[0.0006, 0.002, 0.0052]} />
+        <meshStandardMaterial color="#26282b" roughness={0.5} />
+      </mesh>
+      {/* ESP module substrate and RF shield. */}
+      <mesh position={[moduleX, 0.0072, cz]} castShadow>
+        <boxGeometry args={[pcbW * 0.45, 0.0015, pcbD * 0.72]} />
+        <meshStandardMaterial color="#15191c" roughness={0.58} />
+      </mesh>
+      <mesh position={[moduleX + pcbW * 0.03, 0.009, cz]} castShadow>
+        <boxGeometry args={[pcbW * 0.31, 0.0025, pcbD * 0.5]} />
+        <meshStandardMaterial color="#c7c9c9" metalness={0.78} roughness={0.26} />
+      </mesh>
+      <mesh position={[moduleX + pcbW * 0.21, 0.0094, cz]} castShadow>
+        <boxGeometry args={[pcbW * 0.08, 0.0013, pcbD * 0.58]} />
+        <meshStandardMaterial color="#262626" roughness={0.45} />
+      </mesh>
+      {/* Buttons, regulator, crystal, and passives give the board a real component silhouette. */}
+      {[
+        [minX + pcbW * 0.2, cz - pcbD * 0.2],
+        [minX + pcbW * 0.2, cz + pcbD * 0.2],
+      ].map(([x, z], i) => (
+        <group key={`button-${i}`} position={[x, 0.008, z]}>
+          <mesh castShadow>
+            <boxGeometry args={[0.0032, 0.001, 0.0032]} />
+            <meshStandardMaterial color="#d6d8d8" metalness={0.55} roughness={0.3} />
+          </mesh>
+          <mesh position={[0, 0.0008, 0]} castShadow>
+            <cylinderGeometry args={[0.001, 0.001, 0.0008, 16]} />
+            <meshStandardMaterial color="#222" roughness={0.42} />
+          </mesh>
+        </group>
+      ))}
+      <mesh position={[minX + pcbW * 0.33, 0.008, cz - pcbD * 0.08]} castShadow>
+        <boxGeometry args={[0.0042, 0.0012, 0.0025]} />
+        <meshStandardMaterial color="#161616" roughness={0.45} />
+      </mesh>
+      <mesh position={[minX + pcbW * 0.34, 0.0081, cz + pcbD * 0.1]} castShadow>
+        <boxGeometry args={[0.0048, 0.0011, 0.002]} />
+        <meshStandardMaterial color="#c6c0aa" metalness={0.35} roughness={0.25} />
       </mesh>
       {/* Pin header rails — one per unique z edge */}
       {uniqueZ.map((z) => (
-        <mesh key={z} position={[cx, 0.0062, z]}>
-          <boxGeometry args={[pcbW - margin, 0.002, 0.0025]} />
-          <meshStandardMaterial color="#0a0a0a" />
-        </mesh>
+        <group key={z}>
+          <mesh position={[cx, 0.0068, z]} castShadow>
+            <boxGeometry args={[pcbW - margin * 0.8, 0.0025, 0.0025]} />
+            <meshStandardMaterial color="#080808" roughness={0.35} />
+          </mesh>
+          {edgePins.filter((p) => Math.round(p.position[2] * 10000) / 10000 === z).map((p) => (
+            <group key={p.id} position={[p.position[0], 0.0083, z]}>
+              <mesh castShadow>
+                <boxGeometry args={[0.00145, 0.00035, 0.00145]} />
+                <meshStandardMaterial color="#d7b15d" metalness={0.65} roughness={0.24} />
+              </mesh>
+              <mesh position={[0, 0.00023, 0]}>
+                <boxGeometry args={[0.00082, 0.00025, 0.00082]} />
+                <meshStandardMaterial color="#050505" roughness={0.42} />
+              </mesh>
+            </group>
+          ))}
+        </group>
       ))}
     </group>
   )
@@ -254,24 +319,34 @@ function DefaultBody({ primitiveKind, onClick, selected, lit, pixels, isButton, 
     const emissiveIntensity = lit ? 3 : 1
     return (
       <group onClick={onClick}>
-        {lit && <pointLight position={[0, 0.002, 0]} intensity={0.02} distance={0.05} color="#ff4040" />}
-        <mesh position={[0, 0, 0]} castShadow>
-          <sphereGeometry args={[0.0025, 16, 12]} />
-          <meshStandardMaterial color="#ff1a1a" transparent opacity={0.65}
+        {lit && <pointLight position={[0, 0.003, 0]} intensity={0.025} distance={0.05} color="#ff4040" />}
+        <mesh position={[0, 0.0012, 0]} scale={[1, 1.15, 1]} castShadow>
+          <sphereGeometry args={[0.00245, 24, 16]} />
+          <meshPhysicalMaterial color="#ff2020" transparent opacity={0.62}
+                                roughness={0.18} transmission={0.18} thickness={0.002}
                                 emissive={emissive} emissiveIntensity={emissiveIntensity} />
         </mesh>
-        <mesh position={[0, -0.0025, 0]}>
-          <cylinderGeometry args={[0.0025, 0.0025, 0.001, 16]} />
-          <meshStandardMaterial color="#ff2222" transparent opacity={0.85}
-                                emissive={emissive} emissiveIntensity={emissiveIntensity * 0.5} />
+        <mesh position={[0, -0.0017, 0]} castShadow>
+          <cylinderGeometry args={[0.003, 0.003, 0.0011, 24]} />
+          <meshPhysicalMaterial color="#ef1616" transparent opacity={0.78}
+                                roughness={0.22} transmission={0.1}
+                                emissive={emissive} emissiveIntensity={emissiveIntensity * 0.45} />
         </mesh>
-        <mesh position={[-0.0012, -0.005, 0]}>
-          <cylinderGeometry args={[0.0003, 0.0003, 0.006, 8]} />
+        <mesh position={[-0.0012, -0.0052, 0]}>
+          <cylinderGeometry args={[0.00022, 0.00022, 0.0068, 10]} />
           <meshStandardMaterial color="#c0c0c0" metalness={0.85} roughness={0.3} />
         </mesh>
-        <mesh position={[0.0012, -0.004, 0]}>
-          <cylinderGeometry args={[0.0003, 0.0003, 0.005, 8]} />
+        <mesh position={[0.0012, -0.0047, 0]}>
+          <cylinderGeometry args={[0.00022, 0.00022, 0.0058, 10]} />
           <meshStandardMaterial color="#c0c0c0" metalness={0.85} roughness={0.3} />
+        </mesh>
+        <mesh position={[-0.0012, -0.0085, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.00018, 0.00018, 0.003, 8]} />
+          <meshStandardMaterial color="#c8c8c8" metalness={0.85} roughness={0.3} />
+        </mesh>
+        <mesh position={[0.0012, -0.0076, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.00018, 0.00018, 0.0024, 8]} />
+          <meshStandardMaterial color="#c8c8c8" metalness={0.85} roughness={0.3} />
         </mesh>
       </group>
     )
@@ -279,19 +354,25 @@ function DefaultBody({ primitiveKind, onClick, selected, lit, pixels, isButton, 
   if (primitiveKind === 'resistor') {
     return (
       <group onClick={onClick}>
-        <mesh position={[0, 0, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
-          <cylinderGeometry args={[0.0014, 0.0014, 0.006, 16]} />
-          <meshStandardMaterial color={selected ? '#ffd28a' : '#d8b36a'} roughness={0.45} />
+        <mesh position={[0, 0, 0]} rotation={[0, 0, Math.PI / 2]} scale={[1, 1.12, 1]} castShadow>
+          <cylinderGeometry args={[0.00135, 0.00135, 0.0062, 24]} />
+          <meshStandardMaterial color={selected ? '#f2cb7e' : '#c9a15c'} roughness={0.48} />
         </mesh>
-        {[-0.0018, 0, 0.0018].map((x, i) => (
+        {[-0.0021, -0.00075, 0.00075, 0.0021].map((x, i) => (
           <mesh key={i} position={[x, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
-            <boxGeometry args={[0.00045, 0.003, 0.0029]} />
-            <meshStandardMaterial color={['#7a3f12', '#1a1a1a', '#d72a2a'][i]} roughness={0.5} />
+            <cylinderGeometry args={[0.00142, 0.00142, 0.00036, 24]} />
+            <meshStandardMaterial color={['#7a3f12', '#1a1a1a', '#d72a2a', '#d0aa35'][i]} roughness={0.5} />
           </mesh>
         ))}
-        {[-0.0052, 0.0052].map((x) => (
+        {[-0.0042, 0.0042].map((x) => (
+          <mesh key={`cap-${x}`} position={[x, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.0008, 0.00115, 0.0014, 18]} />
+            <meshStandardMaterial color="#d1b075" roughness={0.52} />
+          </mesh>
+        ))}
+        {[-0.0066, 0.0066].map((x) => (
           <mesh key={x} position={[x, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
-            <cylinderGeometry args={[0.00025, 0.00025, 0.005, 8]} />
+            <cylinderGeometry args={[0.0002, 0.0002, 0.0052, 10]} />
             <meshStandardMaterial color="#c9c9c9" metalness={0.8} roughness={0.25} />
           </mesh>
         ))}
@@ -307,10 +388,24 @@ function DefaultBody({ primitiveKind, onClick, selected, lit, pixels, isButton, 
     const emissiveInt = pressed ? 4 : (simActive ? 1.5 : 0.2)
     return (
       <group onClick={onClick}>
-        <mesh castShadow position={[0, pressed ? 0.001 : 0.002, 0]}>
-          <boxGeometry args={[0.006, pressed ? 0.002 : 0.004, 0.006]} />
-          <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={emissiveInt} />
+        <mesh castShadow position={[0, 0.0002, 0]}>
+          <boxGeometry args={[0.0064, 0.0012, 0.0064]} />
+          <meshStandardMaterial color="#161616" roughness={0.44} />
         </mesh>
+        <mesh castShadow position={[0, 0.0011, 0]}>
+          <boxGeometry args={[0.0056, 0.0007, 0.0056]} />
+          <meshStandardMaterial color="#d0d2d4" metalness={0.55} roughness={0.26} />
+        </mesh>
+        <mesh castShadow position={[0, pressed ? 0.0018 : 0.0026, 0]}>
+          <cylinderGeometry args={[0.0018, 0.0018, pressed ? 0.00075 : 0.0011, 24]} />
+          <meshStandardMaterial color={color} roughness={0.32} emissive={emissive} emissiveIntensity={emissiveInt} />
+        </mesh>
+        {[[-0.0033, -0.0033], [0.0033, -0.0033], [-0.0033, 0.0033], [0.0033, 0.0033]].map(([x, z]) => (
+          <mesh key={`${x}-${z}`} position={[x, -0.002, z]}>
+            <boxGeometry args={[0.00055, 0.003, 0.00055]} />
+            <meshStandardMaterial color="#c8c8c8" metalness={0.82} roughness={0.28} />
+          </mesh>
+        ))}
         {simActive && (
           <mesh position={[0, 0.003, 0]}>
             <ringGeometry args={[0.004, 0.005, 24]} />
