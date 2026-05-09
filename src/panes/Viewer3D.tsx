@@ -1,5 +1,5 @@
 import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber'
-import { OrbitControls, Grid, Environment, Html, CubicBezierLine, TransformControls, useGLTF } from '@react-three/drei'
+import { OrbitControls, Grid, Environment, Html, TransformControls, useGLTF } from '@react-three/drei'
 import { useStore } from '../store'
 import React, { Suspense, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import * as THREE from 'three'
@@ -686,6 +686,44 @@ function ComponentWithPins({ c, selected, lit, simActive }: {
   )
 }
 
+function JumperWire({ start, midA, midB, end, color, isError, onContextMenu }: {
+  start: [number, number, number]
+  midA: [number, number, number]
+  midB: [number, number, number]
+  end: [number, number, number]
+  color: string
+  isError: boolean
+  onContextMenu: (e: ThreeEvent<MouseEvent>) => void
+}) {
+  const curve = useMemo(() => new THREE.CubicBezierCurve3(
+    new THREE.Vector3(...start),
+    new THREE.Vector3(...midA),
+    new THREE.Vector3(...midB),
+    new THREE.Vector3(...end),
+  ), [start, midA, midB, end])
+  const radius = isError ? 0.00055 : 0.00042
+  return (
+    <group onContextMenu={onContextMenu}>
+      <mesh castShadow receiveShadow>
+        <tubeGeometry args={[curve, 40, radius, 10, false]} />
+        <meshStandardMaterial color={color} roughness={0.52} metalness={0.02} />
+      </mesh>
+      {[start, end].map((p, i) => (
+        <group key={i} position={p}>
+          <mesh castShadow>
+            <sphereGeometry args={[radius * 1.25, 12, 8]} />
+            <meshStandardMaterial color="#d8d8d8" metalness={0.78} roughness={0.25} />
+          </mesh>
+          <mesh position={[0, 0.0012, 0]} castShadow>
+            <cylinderGeometry args={[radius * 0.85, radius * 0.85, 0.0024, 10]} />
+            <meshStandardMaterial color={color} roughness={0.48} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  )
+}
+
 function Nets({ violations }: { violations: Violation[] }) {
   const project = useStore((s) => s.project)
   const removeNet = useStore((s) => s.removeNet)
@@ -700,7 +738,7 @@ function Nets({ violations }: { violations: Violation[] }) {
         const isError = net.endpoints.some(e => errorRefs.has(e))
         const isWarn = !isError && net.endpoints.some(e => warnRefs.has(e))
         const baseColor = isError ? '#ff3b30' : isWarn ? '#ffcc00' : netColor(types)
-        // draw chained beziers a..b, b..c, etc.
+        // Draw chained physical jumper wires a..b, b..c, etc.
         const segments: ReactElement[] = []
         for (let i = 0; i < resolved.length - 1; i++) {
           const a = resolved[i], b = resolved[i + 1]
@@ -708,9 +746,9 @@ function Nets({ violations }: { violations: Violation[] }) {
           const ca: [number, number, number] = [a.position[0], a.position[1] + lift, a.position[2]]
           const cb: [number, number, number] = [b.position[0], b.position[1] + lift, b.position[2]]
           segments.push(
-            <CubicBezierLine key={`${net.id}-${i}`}
+            <JumperWire key={`${net.id}-${i}`}
               start={a.position} midA={ca} midB={cb} end={b.position}
-              color={baseColor} lineWidth={isError ? 3 : 2}
+              color={baseColor} isError={isError}
               onContextMenu={(e: any) => {
                 e.stopPropagation()
                 if (window.confirm(`Delete connection between ${net.endpoints.join(' and ')}?`)) removeNet(net.id)
