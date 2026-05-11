@@ -13,17 +13,6 @@ Circuitiny already supports user catalog GLBs, but beginners need a realistic, l
 - Extend Codex tools so the learner can ask for a part in plain English and Codex can recommend free/open model candidates with source and license details before import.
 - Do not use paid assets, scrape paywalled downloads, or bundle models from sources whose redistribution rights are unclear.
 
-## Capabilities
-
-### New Capabilities
-
-- `free-open-model-library`: Discovers, classifies, converts, caches, and imports free/open electronics CAD models into Circuitiny catalog bundles.
-
-### Modified Capabilities
-
-- `part-discovery-and-rendering`: Adds source-backed realistic GLB rendering, license/source confidence, and draft review requirements for imported model assets.
-- `codex-guided-app-control`: Adds Codex-guided free/open model search and import approval while keeping downloads and catalog writes scoped and inspectable.
-
 ## Impact
 
 - Catalog: new source manifest, asset metadata, license classification, duplicate handling, and batch import output that matches the existing `component.json` plus `.glb` bundle shape.

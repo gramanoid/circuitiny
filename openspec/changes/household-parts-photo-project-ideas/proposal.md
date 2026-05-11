@@ -11,19 +11,6 @@ Beginners often have a pile of parts but do not know what each part is, what is 
 - Extend draft part creation/rendering so newly recommended parts can appear in the canvas through GLB, primitive, or generic fallback renderers with explicit review metadata.
 - Do not store the user's Exa API key in source or project files; integrations use `EXA_API_KEY` or a user-managed secret store.
 
-## Capabilities
-
-### New Capabilities
-
-- `household-part-photo-intake`: Uploading/capturing a parts photo, extracting candidate parts, confidence, safety warnings, and learner confirmation state.
-- `parts-knowledge-retrieval`: Local catalog, curated database, and Exa web search fallback for part identity, datasheets, pinouts, safe voltage/current notes, and source citations.
-- `inventory-project-recommendations`: Recommending beginner projects from a confirmed inventory, including missing parts, learning goals, safety notes, and recipe creation hooks.
-
-### Modified Capabilities
-
-- `part-discovery-and-rendering`: Add photo/web-derived draft part metadata, source confidence, and rendering fallback requirements for parts not yet in the local catalog.
-- `codex-guided-app-control`: Add scoped Codex tools for photo analysis, inventory confirmation, parts search, and project recommendation.
-
 ## Impact
 
 - Renderer/UI: new photo intake panel, inventory review UI, project recommendation cards, source badges, and "I have this / not sure" confirmation controls.

@@ -7,6 +7,7 @@ import ChatPane from './panes/ChatPane'
 import CatalogEditor3D from './panes/CatalogEditor3D'
 import CatalogEditorPanel from './panes/CatalogEditorPanel'
 import PartsLabPanel from './panes/PartsLabPanel'
+import BeginnerLabPanel from './panes/BeginnerLabPanel'
 import Palette from './panes/Palette'
 import BoardPicker from './panes/BoardPicker'
 import LearningPanel from './panes/LearningPanel'
@@ -69,6 +70,7 @@ export default function App() {
         <button onClick={() => setMode('project')} style={tabStyle(mode === 'project')}>Project</button>
         <button onClick={() => setMode('catalog-editor')} style={tabStyle(mode === 'catalog-editor')}>Catalog Editor</button>
         <button onClick={() => setMode('parts-lab')} style={tabStyle(mode === 'parts-lab')}>Parts Lab</button>
+        <button onClick={() => setMode('beginner-lab')} style={tabStyle(mode === 'beginner-lab')}>Beginner Lab</button>
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 11, color: dirty ? '#886633' : '#555', marginRight: 4 }}
               title={savedPath ?? 'unsaved'}>
@@ -83,7 +85,7 @@ export default function App() {
         <button onClick={openBoardPicker} style={newProjectStyle}>+ New Project</button>
       </nav>
       <div style={{ flex: 1, minHeight: 0 }}>
-        {mode === 'project' ? <ProjectMode /> : mode === 'catalog-editor' ? <CatalogEditorMode /> : <PartsLabMode />}
+        {renderMode(mode)}
       </div>
       {showBoardPicker && <BoardPicker />}
     </div>
@@ -155,6 +157,39 @@ function PartsLabMode() {
       </Panel>
     </PanelGroup>
   )
+}
+
+function BeginnerLabMode() {
+  return (
+    <PanelGroup direction="horizontal" autoSaveId="circuitiny:beginner-lab">
+      <Panel defaultSize={72} minSize={45}>
+        <PaneFrame title="Beginner Lab" noPad><BeginnerLabPanel /></PaneFrame>
+      </Panel>
+      <ResizeH />
+      <Panel defaultSize={28} minSize={18} maxSize={42}>
+        <PaneFrame title="Agent" noPad><ChatPane /></PaneFrame>
+      </Panel>
+    </PanelGroup>
+  )
+}
+
+function renderMode(mode: ReturnType<typeof useStore.getState>['mode']) {
+  switch (mode) {
+    case 'project':
+      return <ProjectMode />
+    case 'catalog-editor':
+      return <CatalogEditorMode />
+    case 'parts-lab':
+      return <PartsLabMode />
+    case 'beginner-lab':
+      return <BeginnerLabMode />
+    default:
+      return assertUnreachable(mode)
+  }
+}
+
+function assertUnreachable(value: never): never {
+  throw new Error(`Unknown mode: ${String(value)}`)
 }
 
 class ErrorBoundary extends Component<

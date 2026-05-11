@@ -95,6 +95,12 @@ export function catalogReviewWarnings(def: ComponentDef | undefined, hasGlb = fa
   if (meta?.modelAsset?.exactness === 'package' || meta?.modelAsset?.exactness === 'generic') {
     warnings.push('Approximate visual model: compare it with your real part before wiring.')
   }
+  const reviewedFields = Array.isArray(meta?.identityReview?.reviewedFields)
+    ? meta.identityReview.reviewedFields
+    : []
+  if (meta?.trust === 'reviewed' && meta.identityReview && !reviewedFields.includes('pins')) {
+    warnings.push('Reviewed part still has unpromoted identity fields: pin labels have not been marked reviewed.')
+  }
   if (!hasGlb) {
     warnings.push(meta?.renderStrategy === 'generic-block'
       ? 'No GLB or family renderer found: this part will render as a generic block.'
@@ -122,6 +128,7 @@ export function promoteCatalogMeta(meta: CatalogMeta | undefined, hasGlb: boolea
     renderStrategy,
     reviewNotes: Array.from(notes),
     modelAsset: meta?.modelAsset,
+    identityReview: meta?.identityReview,
   }
 }
 

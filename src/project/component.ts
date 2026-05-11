@@ -78,6 +78,13 @@ export type CatalogLicenseUse = 'bundled-ok' | 'local-import-only' | 'blocked'
 export type CatalogModelFormat = 'glb' | 'gltf' | 'step' | 'stp' | 'wrl'
 export type CatalogModelExactness = 'exact' | 'module' | 'package' | 'generic'
 export type CatalogConversionStatus = 'not-needed' | 'needed' | 'converter-unavailable' | 'failed' | 'converted'
+export type CatalogIdentityReviewField =
+  | 'pins'
+  | 'power'
+  | 'companion-parts'
+  | 'source-links'
+  | 'render-scale'
+  | 'schematic-symbol'
 
 export interface CatalogModelAssetMeta {
   sourceId: string
@@ -103,9 +110,34 @@ export interface CatalogMeta {
   renderStrategy?: CatalogRenderStrategy
   reviewNotes?: string[]
   modelAsset?: CatalogModelAssetMeta
+  identityReview?: {
+    reviewedFields: CatalogIdentityReviewField[]
+    /** Strict ISO-8601 UTC timestamp, e.g. YYYY-MM-DDTHH:MM:SS.sssZ. */
+    reviewedAt?: string
+    reviewer?: string
+  }
+}
+
+const ISO_UTC_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/
+
+export function isCatalogIdentityReviewTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string' || !ISO_UTC_TIMESTAMP_RE.test(value)) return false
+  const time = Date.parse(value)
+  if (!Number.isFinite(time)) return false
+  const normalized = value.replace(/\.(\d{1,6})Z$/, (_match, fraction: string) => `.${fraction.padEnd(3, '0').slice(0, 3)}Z`)
+  return new Date(time).toISOString() === normalized
+}
+
+export function catalogIdentityReviewTimestamp(date: Date = new Date()): string {
+  const value = date.toISOString()
+  if (!isCatalogIdentityReviewTimestamp(value)) throw new Error(`Invalid catalog identity review timestamp: ${value}`)
+  return value
 }
 
 export interface ComponentDef {
+  // Discriminator for component vs board definitions. Omitted legacy entries default to 'component';
+  // isBoardDef() relies on kind === 'board' for the only non-component branch.
+  kind?: 'component' | 'board'
   id: string
   name: string
   version: string
@@ -126,6 +158,8 @@ export interface ComponentDef {
 
 // Boards are components with extra MCU metadata.
 export interface BoardDef extends ComponentDef {
+  // Required board discriminator; ComponentDef keeps it optional for legacy component catalogs.
+  kind: 'board'
   target: 'esp32' | 'esp32s2' | 'esp32s3' | 'esp32c3' | 'esp32c6' | 'esp32h2'
   boardVersion?: string
   features?: string[]                      // human-readable feature tags shown in board picker

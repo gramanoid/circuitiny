@@ -4,6 +4,8 @@ import { catalog } from '../catalog'
 import type { ComponentDef } from '../project/component'
 import { renderThumbnail } from '../catalog/thumbnails'
 import { catalogStatusLabel, resolveCatalogRender, type PrimitiveRenderKind } from '../catalog/rendering'
+import { CatalogTrustError, DraftCatalogPartError } from '../codegen/trust'
+import { darkTheme } from '../theme/colors'
 
 // ── Family grouping ────────────────────────────────────────────────────────────
 
@@ -208,9 +210,10 @@ interface PickerProps {
   onAdd: (id: string) => void
   onClose: () => void
   catalogVersion: number
+  addError: string | null
 }
 
-function FamilyPicker({ family, anchorRect, onAdd, onClose, catalogVersion }: PickerProps) {
+function FamilyPicker({ family, anchorRect, onAdd, onClose, catalogVersion, addError }: PickerProps) {
   const ref = useRef<HTMLDivElement>(null)
   const memberRenderInfo = useMemo(() => {
     return new Map(family.members.map((c) => [c.id, resolveCatalogRender(c, !!catalog.getGlbUrl(c.id))]))
@@ -248,6 +251,7 @@ function FamilyPicker({ family, anchorRect, onAdd, onClose, catalogVersion }: Pi
           fontSize: 14, lineHeight: 1, padding: '0 2px',
         }}>×</button>
       </div>
+      {addError && <PaletteErrorAlert message={addError} />}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         {family.members.map((c) => {
           const renderInfo = memberRenderInfo.get(c.id)!
@@ -351,11 +355,32 @@ export default function Palette() {
 
   const [openFamily, setOpenFamily] = useState<string | null>(null)
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null)
+  const [addError, setAddError] = useState<string | null>(null)
 
   const items = catalog.listComponents()
   const families = groupByFamily(items)
 
-  const handleClose = useCallback(() => setOpenFamily(null), [])
+  const handleClose = useCallback(() => {
+    setOpenFamily(null)
+    setAddError(null)
+  }, [])
+  const handleAdd = useCallback((id: string) => {
+    setAddError(null)
+    try {
+      add(id)
+      handleClose()
+    } catch (error) {
+      if (error instanceof DraftCatalogPartError) {
+        setAddError('Some catalog parts are not ready yet. Open Catalog Editor, review the draft part, then try adding it again.')
+        return
+      }
+      if (error instanceof CatalogTrustError) {
+        setAddError('The catalog has unknown or unapproved parts. Resolve them in Catalog Editor, then try again.')
+        return
+      }
+      throw error
+    }
+  }, [add, handleClose])
 
   const openPicker = useCallback((key: string, rect: DOMRect) => {
     setOpenFamily(key)
@@ -378,11 +403,12 @@ export default function Palette() {
             No components. Use Catalog Editor to create some.
           </div>
         )}
+        {addError && <PaletteErrorAlert message={addError} />}
         {families.map((f) => (
           <FamilyCard
             key={f.key}
             family={f}
-            onAdd={add}
+            onAdd={handleAdd}
             isOpen={openFamily === f.key}
             onOpen={(rect) => openPicker(f.key, rect)}
             onClose={handleClose}
@@ -430,10 +456,29 @@ export default function Palette() {
           family={openFamily_}
           anchorRect={anchorRect}
           catalogVersion={catalogVersion}
-          onAdd={(id) => { add(id); handleClose() }}
+          onAdd={handleAdd}
           onClose={handleClose}
+          addError={addError}
         />
       )}
     </div>
   )
+}
+
+function PaletteErrorAlert({ message }: { message: string }) {
+  return (
+    <div role="alert" style={PALETTE_ERROR_STYLE}>
+      {message}
+    </div>
+  )
+}
+
+const PALETTE_ERROR_STYLE: React.CSSProperties = {
+  marginBottom: 8,
+  padding: '6px 8px',
+  color: darkTheme.errorText,
+  background: darkTheme.errorBg,
+  border: `1px solid ${darkTheme.errorBorder}`,
+  borderRadius: 4,
+  lineHeight: 1.35,
 }

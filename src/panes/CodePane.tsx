@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useStore } from '../store'
-import { generate } from '../codegen/generate'
+import { generate, type GeneratedFiles } from '../codegen/generate'
+import { beginnerCodegenError } from '../codegen/errors'
 import { getCheckpoint, getRecipe, getRecipeStep } from '../learning/recipes'
+import { ERROR_PANEL_STYLE } from './sharedStyles'
 
-type FileKey = keyof ReturnType<typeof generate>['files']
+type FileKey = keyof GeneratedFiles
 
 const FILES: FileKey[] = ['main/app_main.c', 'main/CMakeLists.txt', 'sdkconfig.defaults']
 const EDITABLE: FileKey[] = ['main/app_main.c']
@@ -14,7 +16,17 @@ export default function CodePane() {
   const activeRecipeId = useStore((s) => s.activeRecipeId)
   const recipeStepIndex = useStore((s) => s.recipeStepIndex)
   const [active, setActive] = useState<FileKey>('main/app_main.c')
-  const { files, ir } = useMemo(() => generate(project), [project])
+  const generated = useMemo(() => {
+    try {
+      return { ok: true as const, ...generate(project) }
+    } catch (error) {
+      console.error('Code generation failed.', {
+        error,
+        stack: error instanceof Error ? error.stack : undefined,
+      })
+      return { ok: false as const, error: beginnerCodegenError(error) }
+    }
+  }, [project])
   const { recipe, recipeStep, checkpoint } = useMemo(() => {
     const recipe = getRecipe(activeRecipeId)
     const recipeStep = getRecipeStep(activeRecipeId, recipeStepIndex)
@@ -23,6 +35,14 @@ export default function CodePane() {
 
   const customCode = project.customCode ?? {}
   const isCustom = active in customCode
+  if (!generated.ok) {
+    return (
+      <div style={ERROR_PANEL_STYLE} role="alert" aria-live="assertive">
+        {generated.error}
+      </div>
+    )
+  }
+  const { files, ir } = generated
   const activeContent = isCustom ? customCode[active as string] : files[active]
   const isEditable = EDITABLE.includes(active)
 

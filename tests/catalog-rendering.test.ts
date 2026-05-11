@@ -19,6 +19,11 @@ const draftSensor: ComponentDef = {
     confidence: 'low',
     renderStrategy: 'primitive',
     reviewNotes: ['Created from a beginner goal.'],
+    identityReview: {
+      reviewedFields: ['pins', 'source-links'],
+      reviewedAt: '2026-05-09T00:00:00.000Z',
+      reviewer: 'local-user',
+    },
   },
 }
 
@@ -44,5 +49,23 @@ describe('catalog rendering metadata', () => {
     expect(promoted.renderStrategy).toBe('primitive')
     expect(promoted.reviewNotes).toContain('Created from a beginner goal.')
     expect(promoted.reviewNotes).toContain('Reviewed in Circuitiny Catalog Editor.')
+    expect(promoted.identityReview?.reviewedFields).toEqual(['pins', 'source-links'])
+  })
+
+  it('warns when reviewed catalog metadata still has unpromoted identity pins', () => {
+    const reviewedWithoutPinReview: ComponentDef = {
+      ...draftSensor,
+      catalogMeta: {
+        trust: 'reviewed',
+        confidence: 'medium',
+        renderStrategy: 'primitive',
+        identityReview: {
+          reviewedFields: ['source-links'],
+          reviewedAt: '2026-05-09T00:00:00.000Z',
+        },
+      },
+    }
+
+    expect(catalogReviewWarnings(reviewedWithoutPinReview, false).join(' ')).toContain('pin labels have not been marked reviewed')
   })
 })

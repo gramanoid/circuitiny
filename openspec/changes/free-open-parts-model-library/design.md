@@ -59,6 +59,25 @@ Imported models produce the same bundle shape as the current Catalog Editor: `.g
 
 Alternative considered: auto-promote models with inferred pins. Rejected because model geometry and footprint pads can be physically correct while the learner-facing electrical mapping is still wrong.
 
+### Decision: Optimizer jobs use explicit queue and budget contracts
+
+Job Payload: asset identifier, current local file path, source URL, target budget snapshot, retry count, and conversion log reference.
+
+Target Budget Semantics: all budget thresholds (`max_file_size_mb`, `max_vertex_count`, `max_triangle_count`) are checked independently. When multiple thresholds fail, file-size violations are reported first, followed by geometry violations (`max_vertex_count`, `max_triangle_count`), then optional combined-score failures, so learners see the most concrete cause first. The dashboard/API expose the effective budget and every exceeded field.
+
+Queue and Runtime Controls:
+
+- Concurrency: configurable `MAX_CONCURRENT_JOBS` defaults to 2, with optional CPU scaling `min(max(1, floor(cpu_count / 4)), configured_max)` to keep conversion responsive on beginner laptops.
+- Queue depth: configurable `MAX_QUEUE_DEPTH` defaults to 50 so broad source refreshes cannot bury learner-requested work.
+- Timeout: configurable `JOB_TIMEOUT_SECONDS` with a default of 900 seconds; per-source or per-complexity policy may adjust it, and runners emit duration/timeout telemetry for tuning.
+- Disk-space guard: compute `reserve = max(MIN_DISK_RESERVE, min(MAX_DISK_RESERVE, PERCENTAGE * available_disk()))` with defaults `MIN_DISK_RESERVE = 512 MB`, `MAX_DISK_RESERVE = 2 GB`, and `PERCENTAGE = 0.10`, so nearly-full volumes are protected using available disk rather than total disk.
+- Prioritization: manual learner-requested optimizations use FIFO ahead of background refresh jobs.
+- Queue-full behavior: new background work is dropped with a status event; learner-requested work returns a visible "try again after current jobs finish" message.
+
+Retry Policy: `MAX_RETRY_COUNT = 3` with `base_delay = 5s`, `backoff_multiplier = 2`, and jitter sampled from `random(-0.2, 0.2)`. Retry count starts at 0 and delay is `base_delay * (backoff_multiplier ^ retry_count) * (1 + jitter)` for resource, timeout, and transient file-system errors; deterministic conversion/import errors are permanent.
+
+Failure Handling: failed optimizer runs keep the part draft-only, preserve the original model, and expose retry or "replace the model manually" actions from the model library dashboard with status, retry count, and conversion log reference. Permanent failures stop automatic retries but keep the source candidate searchable with a "model needs manual replacement" status.
+
 ### Decision: Starter pack before full index
 
 The app ships or offers a small beginner starter pack first: LEDs, common resistors, capacitors, tactile buttons, potentiometers, buzzers, displays, simple sensors, headers/connectors, common power parts, and breadboard aids where license-safe models exist. Broad source search remains available but is secondary.

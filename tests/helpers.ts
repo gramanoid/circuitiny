@@ -1,6 +1,7 @@
 // Shared project builder for tests — keeps test bodies short.
 
 import type { Project, Net, Behavior } from '../src/project/schema'
+import type { RealityCheckStorage } from '../src/reality/check'
 
 export function makeProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -32,4 +33,22 @@ export function makeSeedProject(): Project {
       { id: 'net5', endpoints: ['btn1.b', 'board.gnd_r'] },
     ],
   })
+}
+
+export function memoryStorage(): RealityCheckStorage {
+  const values = new Map<string, string>()
+  return {
+    get length() {
+      return values.size
+    },
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => Array.from(values.keys())[index] ?? null,
+    setItem: (key, value) => {
+      values.set(key, value)
+    },
+    removeItem: (key) => {
+      values.delete(key)
+    },
+    clear: () => values.clear(),
+  }
 }

@@ -6,8 +6,10 @@ import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { spawn, spawnSync, type ChildProcess, type ChildProcessWithoutNullStreams } from 'child_process'
 import { createHash, randomUUID } from 'crypto'
+import type { IdfStartOptions } from '../src/global'
 import * as pty from 'node-pty'
 import { convertStepLikeCadToGlb } from './modelConversion'
+import { CODEX_REASONING_EFFORTS, type CodexCliReasoningEffort } from '../src/agent/reasoningEffort'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const ICON_PATH = join(__dirname, '../../resources/icon.png')
@@ -505,9 +507,11 @@ ipcMain.handle('listSerialPorts', async () => {
   }
 })
 
-ipcMain.handle('idfStart', async (_e, opts: {
-  name: string; target: string; op: 'build' | 'flash' | 'monitor' | 'clean'; port?: string
-}) => {
+ipcMain.handle('idfStart', async (_e, opts: IdfStartOptions) => {
+  if (opts.op !== 'clean') {
+    const op = opts.op
+    if (opts.approved !== true) throw new Error(`${op} requires explicit user approval`)
+  }
   const dir = projectDirFor(opts.name)
   if (!existsSync(dir)) throw new Error(`Project dir does not exist: ${dir} (write first)`)
   if (!existsSync(IDF_PATH)) throw new Error(`ESP-IDF not found at ${IDF_PATH} (set CIRCUITINY_IDF_PATH)`)
@@ -688,8 +692,8 @@ function defaultCodexCliModel(requestedModel: string | undefined): string {
   return 'gpt-5.5'
 }
 
-function isCodexReasoningEffort(value: unknown): value is 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' {
-  return value === 'minimal' || value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh'
+function isCodexReasoningEffort(value: unknown): value is CodexCliReasoningEffort {
+  return typeof value === 'string' && CODEX_REASONING_EFFORTS.includes(value as CodexCliReasoningEffort)
 }
 
 function cliNames(name: string): string[] {
@@ -812,7 +816,7 @@ ipcMain.handle('codexChat', async (_e, opts: {
   runId?: string
   prompt: string
   model: string
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  reasoningEffort?: CodexCliReasoningEffort
   includeScreenshot?: boolean
 }): Promise<{ ok: boolean; text?: string; error?: string }> => {
   const PATH = [...CLI_EXTRA_PATHS, process.env.PATH ?? ''].join(delimiter)
@@ -929,7 +933,7 @@ ipcMain.handle('analyzePartsPhoto', async (_e, opts: {
   path: string
   notes?: string
   model?: string
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  reasoningEffort?: CodexCliReasoningEffort
 }): Promise<{ ok: boolean; text?: string; error?: string }> => {
   const photoPath = String(opts.path ?? '')
   try {
@@ -1027,7 +1031,7 @@ function mimeForImagePath(photoPath: string): string {
 function runCodexExec(opts: {
   prompt: string
   model?: string
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  reasoningEffort?: CodexCliReasoningEffort
   imagePaths?: string[]
   cwd: string
 }): Promise<{ ok: boolean; text?: string; error?: string }> {
@@ -1035,7 +1039,7 @@ function runCodexExec(opts: {
   const binary = resolveCliBinary('codex', CLI_EXTRA_PATHS)
   const outputPath = join(app.getPath('temp'), `circuitiny-codex-${randomUUID()}.txt`)
   const model = defaultCodexCliModel(opts.model)
-  const reasoningEffort = isCodexReasoningEffort(opts.reasoningEffort) ? opts.reasoningEffort : 'medium'
+  const reasoningEffort = isCodexReasoningEffort(opts.reasoningEffort) ? opts.reasoningEffort : 'high'
 
   return new Promise((resolve) => {
     const args = [

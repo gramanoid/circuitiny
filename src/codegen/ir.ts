@@ -5,6 +5,7 @@ import type { Project } from '../project/schema'
 import type { PinType } from '../project/schema'
 import { catalog } from '../catalog'
 import { resolvePin } from '../project/pins'
+import { projectWithPhysicalNets, type PhysicalLayout } from '../physical/breadboard'
 
 export interface IrComponent {
   instance: string
@@ -24,19 +25,27 @@ export interface IrBus {
 export interface Ir {
   target: string
   board: string
+  connectivityProject: Project
   components: IrComponent[]
   buses: IrBus[]
   app: { wifi: boolean; mqtt: boolean; httpClient: boolean; httpServer: boolean; logLevel: string }
   issues: string[]                      // unresolved pins, etc. (non-fatal generator notes)
 }
 
-export function buildIr(project: Project): Ir {
+export function buildIr(project: Project, options: { physicalMode?: boolean; physicalLayout?: PhysicalLayout } = {}): Ir {
+  // Physical-net derivation is centralized here so simulation/codegen callers
+  // share the same schematic-compatible connectivity table.
+  // Providing a physicalLayout means callers want physical-net connectivity unless they explicitly opt out.
+  let sourceProject = project
+  if (options.physicalLayout) {
+    sourceProject = projectWithPhysicalNets(project, options.physicalLayout, options.physicalMode ?? true)
+  }
   const issues: string[] = []
-  const board = catalog.getBoard(project.board)
+  const board = catalog.getBoard(sourceProject.board)
 
   // Build a quick lookup: "instance.pinId" -> board pin label (e.g. "4")
   const assignments = new Map<string, string>()
-  for (const net of project.nets) {
+  for (const net of sourceProject.nets) {
     const boardEndpoints = net.endpoints.filter((e) => e.startsWith('board.'))
     const nonBoardEndpoints = net.endpoints.filter((e) => !e.startsWith('board.'))
     if (boardEndpoints.length === 0) continue
@@ -48,7 +57,7 @@ export function buildIr(project: Project): Ir {
     }
   }
 
-  const components: IrComponent[] = project.components.map((c) => {
+  const components: IrComponent[] = sourceProject.components.map((c) => {
     const def = catalog.getComponent(c.componentId)
     return {
       instance: c.instance,
@@ -80,16 +89,17 @@ export function buildIr(project: Project): Ir {
   const buses = inferBuses(components)
 
   return {
-    target: project.target,
-    board: project.board,
+    target: sourceProject.target,
+    board: sourceProject.board,
+    connectivityProject: sourceProject,
     components,
     buses,
     app: {
-      wifi: project.app.wifi.enabled,
-      mqtt: project.app.mqtt?.enabled ?? false,
-      httpClient: project.app.http?.client ?? false,
-      httpServer: project.app.http?.server ?? false,
-      logLevel: project.app.log_level
+      wifi: sourceProject.app.wifi.enabled,
+      mqtt: sourceProject.app.mqtt?.enabled ?? false,
+      httpClient: sourceProject.app.http?.client ?? false,
+      httpServer: sourceProject.app.http?.server ?? false,
+      logLevel: sourceProject.app.log_level
     },
     issues
   }

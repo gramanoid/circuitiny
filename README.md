@@ -610,6 +610,11 @@ electron/
 └── preload.ts  # contextBridge: exposes window.circuitiny to the renderer
 ```
 
+Anthropic thinking detection is intentionally limited to API-style Claude model IDs:
+`claude-3-7-sonnet[-YYYYMMDD]`, `claude-{haiku|sonnet|opus}-{major}-{minor}[-YYYYMMDD]`,
+and explicit preview/research IDs such as `claude-haiku-preview`. Claude 4.6+ and later are
+treated as adaptive thinking models; older supported thinking models use fixed budget tiers.
+
 **Data flow:**
 
 ```

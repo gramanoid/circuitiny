@@ -1,7 +1,7 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useStore, type CatalogDraft, type DraftPin, type Category } from '../store'
 import type { PinType } from '../project/schema'
-import type { CatalogMeta, ComponentDef } from '../project/component'
+import { catalogIdentityReviewTimestamp, type CatalogIdentityReviewField, type CatalogMeta, type ComponentDef } from '../project/component'
 import { catalogReviewWarnings, promoteCatalogMeta } from '../catalog/rendering'
 import ModelLibraryPanel from './ModelLibraryPanel'
 
@@ -18,6 +18,14 @@ const CATEGORIES: Category[] = ['sensor', 'actuator', 'display', 'input', 'power
 const TRUST_OPTIONS: CatalogMeta['trust'][] = ['builtin', 'ai-draft', 'user-installed', 'reviewed']
 const CONFIDENCE_OPTIONS: Array<NonNullable<CatalogMeta['confidence']>> = ['high', 'medium', 'low']
 const RENDER_OPTIONS: Array<NonNullable<CatalogMeta['renderStrategy']>> = ['catalog-glb', 'draft-glb', 'primitive', 'generic-block']
+const IDENTITY_REVIEW_FIELDS: Array<{ field: CatalogIdentityReviewField; label: string }> = [
+  { field: 'pins', label: 'Pins and labels' },
+  { field: 'power', label: 'Voltage/current' },
+  { field: 'companion-parts', label: 'Required companion parts' },
+  { field: 'source-links', label: 'Datasheet/source links' },
+  { field: 'render-scale', label: '3D model scale/orientation' },
+  { field: 'schematic-symbol', label: 'Schematic symbol' },
+]
 
 function lines(value: string): string[] {
   return value.split('\n').map((s) => s.trim()).filter(Boolean)
@@ -36,7 +44,55 @@ function draftToComponent(draft: CatalogDraft): ComponentDef {
   }
 }
 
+interface PinIdValidationIssue {
+  index: number
+  message: string
+}
+
+function pinIdValidationIssues(pins: DraftPin[]): PinIdValidationIssue[] {
+  const seen = new Map<string, string>()
+  const issues: PinIdValidationIssue[] = []
+  pins.forEach((pin, index) => {
+    // validateDraftPinId records normalized IDs in `seen` so later rows can detect duplicates.
+    const error = validateDraftPinId(pin.id, seen)
+    if (error) issues.push({ index, message: pinIdValidationMessage(error) })
+  })
+  return issues
+}
+
+type PinIdValidationError =
+  | { kind: 'empty' }
+  | { kind: 'surrounding-whitespace' }
+  | { kind: 'duplicate'; existing: string; next: string }
+  | { kind: 'case-duplicate'; existing: string; next: string }
+
+function validateDraftPinId(id: string, seen: Map<string, string>): PinIdValidationError | null {
+  const trimmed = id.trim()
+  const normalized = trimmed.toLowerCase()
+  if (!normalized) return { kind: 'empty' }
+  if (id !== trimmed) return { kind: 'surrounding-whitespace' }
+  const existing = seen.get(normalized)
+  if (existing) {
+    return existing !== id
+      ? { kind: 'case-duplicate', existing, next: id }
+      : { kind: 'duplicate', existing, next: id }
+  }
+  seen.set(normalized, id)
+  return null
+}
+
+function pinIdValidationMessage(error: PinIdValidationError): string {
+  if (error.kind === 'empty') return 'Pin ID cannot be empty or whitespace-only. Assign a valid ID before exporting.'
+  if (error.kind === 'surrounding-whitespace') return 'Pin ID contains leading or trailing whitespace; remove surrounding spaces before exporting.'
+  if (error.kind === 'case-duplicate') return `Pin IDs cannot differ only by case: ${error.existing} and ${error.next}. Rename one before exporting.`
+  return `Duplicate pin ID: ${error.next}. Rename one before exporting.`
+}
+
 export default function CatalogEditorPanel() {
+  const pinErrorRef = useRef<HTMLDivElement>(null)
+  const pinInputRefs = useRef<Array<HTMLInputElement | null>>([])
+  const mountedRef = useRef(true)
+  const pendingFocusFrame = useRef<number | null>(null)
   const draft = useStore((s) => s.draft)
   const setMeta = useStore((s) => s.setDraftMeta)
   const loadGlb = useStore((s) => s.loadDraftGlb)
@@ -49,9 +105,34 @@ export default function CatalogEditorPanel() {
   const draftComponent = useMemo(() => draftToComponent(draft), [draft])
   const reviewWarnings = useMemo(() => catalogReviewWarnings(draftComponent, hasGlb), [draftComponent, hasGlb])
   const promotedMeta = useMemo(() => promoteCatalogMeta(draft.catalogMeta, hasGlb), [draft.catalogMeta, hasGlb])
+  const pinIdIssues = useMemo(() => pinIdValidationIssues(draft.pins), [draft.pins])
+  const pinIdError = pinIdIssues[0]?.message ?? null
+
+  useEffect(() => () => {
+    mountedRef.current = false
+    if (pendingFocusFrame.current !== null) window.cancelAnimationFrame(pendingFocusFrame.current)
+  }, [])
+
+  useEffect(() => {
+    pinInputRefs.current.length = draft.pins.length
+  }, [draft.pins.length])
 
   function updateCatalogMeta(patch: Partial<CatalogMeta>) {
     setMeta({ catalogMeta: { ...(draft.catalogMeta ?? {}), ...patch } })
+  }
+
+  function updateIdentityReviewField(field: CatalogIdentityReviewField, reviewed: boolean) {
+    const current = draft.catalogMeta?.identityReview?.reviewedFields ?? []
+    const reviewedFields = reviewed
+      ? Array.from(new Set([...current, field]))
+      : current.filter((candidate) => candidate !== field)
+    updateCatalogMeta({
+      identityReview: {
+        reviewedFields,
+        reviewedAt: catalogIdentityReviewTimestamp(),
+        reviewer: 'local-user',
+      },
+    })
   }
 
   async function pick() {
@@ -79,7 +160,8 @@ export default function CatalogEditorPanel() {
           confidence: 'medium',
           renderStrategy: r.glbData ? 'catalog-glb' : 'primitive',
         },
-        pins: Array.isArray(j.pins) ? j.pins.map((p: any): DraftPin => ({
+        pins: Array.isArray(j.pins) ? j.pins.map((p: any, index: number): DraftPin => ({
+          localId: `loaded-pin-${Date.now().toString(36)}-${index}`,
           id: p.id, label: p.label ?? p.id,
           type: p.type ?? 'digital_io',
           position: p.position, normal: p.normal ?? [0, 1, 0]
@@ -91,6 +173,20 @@ export default function CatalogEditorPanel() {
 
   async function exportBundle() {
     if (!draft.id) { alert('Set an id first'); return }
+    if (pinIdError) {
+      pinErrorRef.current?.focus()
+      if (pendingFocusFrame.current !== null) window.cancelAnimationFrame(pendingFocusFrame.current)
+      const targetIndex = pinIdIssues[0]?.index ?? -1
+      pendingFocusFrame.current = window.requestAnimationFrame(() => {
+        pendingFocusFrame.current = null
+        if (!mountedRef.current) return
+        const input = pinInputRefs.current[targetIndex]
+        if (!input) return
+        input.scrollIntoView({ block: 'center' })
+        input.focus()
+      })
+      return
+    }
     const catalogMeta = promotedMeta
     const out = {
       id: draft.id,
@@ -179,6 +275,21 @@ export default function CatalogEditorPanel() {
                     rows={2}
                     style={{ ...inputStyle, resize: 'vertical' }} />
         </Field>
+        <Field label="Identity fields reviewed">
+          <div style={{ display: 'grid', gap: 4 }}>
+            {IDENTITY_REVIEW_FIELDS.map(({ field, label }) => {
+              const checked = draft.catalogMeta?.identityReview?.reviewedFields.includes(field) ?? false
+              return (
+                <label key={field} style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#b7c7d8', fontSize: 11 }}>
+                  <input type="checkbox"
+                         checked={checked}
+                         onChange={(event) => updateIdentityReviewField(field, event.target.checked)} />
+                  <span>{label}</span>
+                </label>
+              )
+            })}
+          </div>
+        </Field>
         {draft.catalogMeta?.modelAsset && (
           <div style={{ color: '#8da0b8', fontSize: 10, lineHeight: 1.45, marginBottom: 8 }}>
             <div>asset: {draft.catalogMeta.modelAsset.sourceId}</div>
@@ -230,9 +341,23 @@ export default function CatalogEditorPanel() {
         <div style={{ color: '#888', fontSize: 11, marginBottom: 6 }}>
           {draft.pins.length} pin{draft.pins.length === 1 ? '' : 's'} — click on the model to add
         </div>
-        {draft.pins.map((p) => (
-          <PinRow key={p.id} pin={p}
+        {pinIdError && (
+          <div id="catalog-pin-id-error" ref={pinErrorRef} role="alert" tabIndex={-1}
+               style={{ color: '#ffb4a8', fontSize: 10, lineHeight: 1.35, marginBottom: 6 }}>
+            <div>{pinIdIssues.length} pin issue{pinIdIssues.length === 1 ? '' : 's'} found before export.</div>
+            {pinIdIssues.map((issue) => (
+              <div key={`${issue.index}:${issue.message}`}>{issue.message}</div>
+            ))}
+          </div>
+        )}
+        {draft.pins.map((p, index) => (
+          <PinRow key={p.localId} pin={p}
+                  index={index}
                   selected={draft.selectedPin === p.id}
+                  errorMessage={pinIdIssues.find((issue) => issue.index === index)?.message}
+                  inputRef={(node) => {
+                    pinInputRefs.current[index] = node
+                  }}
                   onSelect={() => selectPin(p.id)}
                   onChange={(patch) => updatePin(p.id, patch)}
                   onRemove={() => removePin(p.id)} />
@@ -240,7 +365,13 @@ export default function CatalogEditorPanel() {
       </section>
 
       <section>
-        <button onClick={exportBundle} style={{ ...btnStyle, width: '100%' }}>
+        <button
+          onClick={exportBundle}
+          disabled={!!pinIdError}
+          aria-describedby={pinIdError ? 'catalog-pin-id-error' : undefined}
+          title={pinIdError ?? 'Export reviewed part'}
+          style={{ ...btnStyle, width: '100%', opacity: pinIdError ? 0.55 : 1, cursor: pinIdError ? 'not-allowed' : 'pointer' }}
+        >
           💾 Export reviewed part
         </button>
       </section>
@@ -248,21 +379,30 @@ export default function CatalogEditorPanel() {
   )
 }
 
-function PinRow({ pin, selected, onSelect, onChange, onRemove }: {
+function PinRow({ pin, index, selected, errorMessage, inputRef, onSelect, onChange, onRemove }: {
   pin: DraftPin
+  index: number
   selected: boolean
+  errorMessage?: string
+  inputRef: (node: HTMLInputElement | null) => void
   onSelect: () => void
   onChange: (p: Partial<DraftPin>) => void
   onRemove: () => void
 }) {
+  const errorId = `catalog-pin-${index}-error`
   return (
     <div onClick={onSelect}
          style={{ padding: 6, marginBottom: 4, borderRadius: 4,
                   background: selected ? '#2a3140' : '#202020',
-                  border: `1px solid ${selected ? '#4a90d9' : '#333'}`, cursor: 'pointer' }}>
+                  border: `1px solid ${errorMessage ? '#9b4b4b' : selected ? '#4a90d9' : '#333'}`, cursor: 'pointer' }}>
       <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-        <input value={pin.id} onChange={(e) => onChange({ id: e.target.value })}
-               style={{ ...inputStyle, flex: 1, fontSize: 11 }} placeholder="id" />
+        <input ref={inputRef}
+               value={pin.id}
+               onChange={(e) => onChange({ id: e.target.value })}
+               aria-invalid={!!errorMessage}
+               aria-describedby={errorMessage ? errorId : undefined}
+               style={{ ...inputStyle, flex: 1, fontSize: 11, borderColor: errorMessage ? '#9b4b4b' : inputStyle.borderColor }}
+               placeholder="id" />
         <input value={pin.label} onChange={(e) => onChange({ label: e.target.value })}
                style={{ ...inputStyle, flex: 1, fontSize: 11 }} placeholder="label" />
         <button onClick={(e) => { e.stopPropagation(); onRemove() }}
@@ -275,6 +415,11 @@ function PinRow({ pin, selected, onSelect, onChange, onRemove }: {
       <div style={{ fontSize: 9, color: '#666', marginTop: 4 }}>
         ({pin.position.map(n => n.toFixed(4)).join(', ')})
       </div>
+      {errorMessage && (
+        <div id={errorId} role="alert" style={{ color: '#ffb4a8', fontSize: 10, lineHeight: 1.35, marginTop: 4 }}>
+          {errorMessage}
+        </div>
+      )}
     </div>
   )
 }

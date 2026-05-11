@@ -15,6 +15,11 @@ export interface Violation {
   fixHint?: { action: string; [k: string]: unknown }
 }
 
+export interface DrcResult {
+  errors: Violation[]
+  warnings: Violation[]
+}
+
 type Rule = (project: Project) => Violation[]
 
 const rules: Rule[] = [
@@ -30,7 +35,7 @@ const rules: Rule[] = [
   ruleCurrentBudget,
 ]
 
-export function runDrc(project: Project): { errors: Violation[]; warnings: Violation[] } {
+export function runDrc(project: Project): DrcResult {
   const out = rules.flatMap((r) => r(project))
     .filter((v) => !project.drcOverrides?.includes(v.id))
   return {

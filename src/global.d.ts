@@ -1,3 +1,5 @@
+import type { CodexCliReasoningEffort } from './agent/reasoningEffort'
+
 export {}
 
 export interface IdfLogEvent { runId: string; stream: 'stdout' | 'stderr'; text: string }
@@ -15,6 +17,9 @@ export interface ModelInstallResult {
   conversionLog?: string[]
   error?: string
 }
+export type IdfStartOptions =
+  | { name: string; target: string; op: 'clean'; port?: string; approved?: never }
+  | { name: string; target: string; op: 'build' | 'flash' | 'monitor'; port?: string; approved: true }
 
 declare global {
   interface Window {
@@ -30,7 +35,7 @@ declare global {
       openProject: () => Promise<{ project: unknown; path: string } | null>
       projectWrite: (name: string, target: string, files: Record<string, string>) => Promise<{ dir: string; target: string }>
       listSerialPorts: () => Promise<string[]>
-      idfStart: (opts: { name: string; target: string; op: 'build' | 'flash' | 'monitor' | 'clean'; port?: string }) => Promise<{ runId: string; cwd: string; cmd: string }>
+      idfStart: (opts: IdfStartOptions) => Promise<{ runId: string; cwd: string; cmd: string }>
       idfStop: (runId: string) => Promise<{ ok: boolean; reason?: string }>
       onIdfLog: (cb: (e: IdfLogEvent) => void) => () => void
       onIdfExit: (cb: (e: IdfExitEvent) => void) => () => void
@@ -41,10 +46,10 @@ declare global {
       onSimEvent: (cb: (e: { runId: string; line: string }) => void) => () => void
       onSimExit: (cb: (e: { runId: string; code: number | null; signal: string | null }) => void) => () => void
       claudeCodeChat: (opts: { prompt: string; systemAppend: string; model: string }) => Promise<{ ok: boolean; text?: string; error?: string }>
-      codexChat: (opts: { runId?: string; prompt: string; model: string; reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'; includeScreenshot?: boolean }) => Promise<{ ok: boolean; text?: string; error?: string }>
+      codexChat: (opts: { runId?: string; prompt: string; model: string; reasoningEffort?: CodexCliReasoningEffort; includeScreenshot?: boolean }) => Promise<{ ok: boolean; text?: string; error?: string }>
       codexStop: (runId: string) => Promise<{ ok: boolean; reason?: string }>
       pickPartsPhoto: () => Promise<PartsPhoto | null>
-      analyzePartsPhoto: (opts: { path: string; notes?: string; model?: string; reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' }) => Promise<{ ok: boolean; text?: string; error?: string }>
+      analyzePartsPhoto: (opts: { path: string; notes?: string; model?: string; reasoningEffort?: CodexCliReasoningEffort }) => Promise<{ ok: boolean; text?: string; error?: string }>
       exaPartSearch: (query: string) => Promise<{ ok: boolean; results?: ExaPartSearchResult[]; error?: string }>
     }
   }

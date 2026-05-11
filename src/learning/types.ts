@@ -47,6 +47,10 @@ export interface RecipeGuideStep {
   checkpointId?: string
 }
 
+/**
+ * JSON-like recipe data. `verifiedRecipes.deepEqual` does not compare Map/Set
+ * entries by value, so use arrays/records or serialize Map/Set fields first.
+ */
 export interface LearningRecipe {
   id: string
   goal: string

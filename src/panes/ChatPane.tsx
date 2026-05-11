@@ -8,6 +8,7 @@ import { useStore } from '../store'
 
 const LS_KEY     = 'circuitiny:provider-cfg'
 const LS_EXPERT  = 'circuitiny:expert-mode'
+const LS_NOTICE  = 'circuitiny:provider-notice'
 
 const STARTER_PROMPTS = [
   'Blink an LED every second',
@@ -16,13 +17,112 @@ const STARTER_PROMPTS = [
   'Build a traffic light with red, yellow, and green LEDs',
 ]
 
-type ReasoningEffort = NonNullable<ProviderConfig['reasoningEffort']>
-const REASONING_EFFORTS: ReasoningEffort[] = ['minimal', 'low', 'medium', 'high', 'xhigh']
+// ReasoningEffort and REASONING_EFFORTS hide legacy 'none'/'minimal' UI choices;
+// ProviderConfig still accepts them for migration compatibility and maps them to 'low'.
+type ReasoningEffort = Exclude<NonNullable<ProviderConfig['reasoningEffort']>, 'none' | 'minimal'>
+const REASONING_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh']
 
-function loadCfg() {
-  try { return JSON.parse(localStorage.getItem(LS_KEY) ?? '{}') } catch { return {} }
+interface SavedProviderConfig {
+  provider?: ProviderType
+  model?: string
+  apiKey?: string
+  baseUrl?: string
+  reasoningEffort?: ReasoningEffort | 'none' | 'minimal'
 }
-function saveCfg(o: object) { localStorage.setItem(LS_KEY, JSON.stringify(o)) }
+
+interface ProviderNotice {
+  type: 'info'
+  message: string
+  previous?: 'minimal' | 'none'
+  next?: 'low'
+  provider?: string
+  model?: string
+}
+
+interface LoadedProviderConfig {
+  config: SavedProviderConfig
+  migrationNotice: ProviderNotice | null
+}
+
+function loadCfg(): LoadedProviderConfig {
+  try {
+    const raw = localStorage.getItem(LS_KEY)
+    return parseSavedProviderConfig(raw ? JSON.parse(raw) : {})
+  } catch (error) {
+    console.error('Failed to parse saved provider config.', { error, key: LS_KEY })
+    return { config: {}, migrationNotice: null }
+  }
+}
+function saveCfg(o: object): boolean {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(o))
+    return true
+  } catch (error) {
+    console.warn('Failed to save provider config.', { error, key: LS_KEY })
+    return false
+  }
+}
+
+function parseSavedProviderConfig(value: unknown): LoadedProviderConfig {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { config: {}, migrationNotice: null }
+  const record = value as Record<string, unknown>
+  const out: SavedProviderConfig = {}
+  let migrationNotice: ProviderNotice | null = null
+  if (typeof record.provider === 'string' && record.provider in PROVIDER_DEFAULTS) out.provider = record.provider as ProviderType
+  if (typeof record.model === 'string') out.model = record.model
+  if (typeof record.apiKey === 'string') out.apiKey = record.apiKey
+  if (typeof record.baseUrl === 'string') out.baseUrl = record.baseUrl
+  if (record.reasoningEffort === 'minimal' || record.reasoningEffort === 'none') {
+    out.reasoningEffort = 'low'
+    migrationNotice = buildReasoningEffortMigrationNotice(record.reasoningEffort, record.provider, record.model)
+  } else if (typeof record.reasoningEffort === 'string') {
+    out.reasoningEffort = REASONING_EFFORTS.includes(record.reasoningEffort as ReasoningEffort)
+      ? record.reasoningEffort as ReasoningEffort
+      : 'medium'
+  }
+  return { config: out, migrationNotice }
+}
+
+function currentReasoningEffort(value: SavedProviderConfig['reasoningEffort']): ReasoningEffort {
+  if (value === 'none' || value === 'minimal') return 'low'
+  return value ?? 'medium'
+}
+
+function buildReasoningEffortMigrationNotice(previous: 'minimal' | 'none', provider: unknown, model: unknown): ProviderNotice {
+  const message = `Reasoning effort "${previous}" was migrated to "low".`
+  const detail = {
+    previous,
+    next: 'low' as const,
+    provider: typeof provider === 'string' ? provider : undefined,
+    model: typeof model === 'string' ? model : undefined,
+  }
+  console.info('reasoning_effort_migrated', detail)
+  return { type: 'info', message, ...detail }
+}
+
+function storeProviderNotice(notice: ProviderNotice): boolean {
+  try {
+    localStorage.setItem(LS_NOTICE, JSON.stringify(notice))
+    return true
+  } catch (error) {
+    console.warn('Failed to store provider migration notice.', { error, notice })
+    return false
+  }
+}
+
+function loadProviderNotice(): { type: 'info'; message: string } | null {
+  try {
+    const raw = localStorage.getItem(LS_NOTICE)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return parsed?.type === 'info' && typeof parsed.message === 'string'
+      ? { type: 'info', message: parsed.message }
+      : null
+  } catch (error) {
+    console.warn('Failed to load provider notice.', { error, key: LS_NOTICE })
+    return null
+  }
+}
 
 const FALLBACK_MODELS: Record<ProviderType, string[]> = {
   ollama:      [],
@@ -81,15 +181,18 @@ async function fetchModels(provider: ProviderType, apiKey: string, baseUrl: stri
 }
 
 export default function ChatPane() {
-  const saved = loadCfg()
+  const loaded = useMemo(() => loadCfg(), [])
+  const saved = loaded.config
+  const migrationNoticeRef = useRef<ProviderNotice | null>(loaded.migrationNotice)
   const [provider, setProvider]     = useState<ProviderType>(saved.provider ?? 'ollama')
   const [model, setModel]           = useState<string>(saved.model ?? PROVIDER_DEFAULTS.ollama.defaultModel)
   const [apiKey, setApiKey]         = useState<string>(saved.apiKey ?? '')
   const [baseUrl, setBaseUrl]       = useState<string>(saved.baseUrl ?? '')
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(saved.reasoningEffort ?? 'medium')
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(currentReasoningEffort(saved.reasoningEffort))
   const [showCfg, setShowCfg]       = useState(false)
   const [expertMode, setExpertMode] = useState<boolean>(() => localStorage.getItem(LS_EXPERT) === 'true')
   const [dynamicModels, setDynamicModels] = useState<string[]>([])
+  const [notice, setNotice] = useState(() => loadProviderNotice())
 
   const projectName = useStore((s) => s.project.name)
 
@@ -119,7 +222,16 @@ export default function ChatPane() {
   }, [provider, apiKey, baseUrl])
 
   useEffect(() => {
+    const migratedNotice = migrationNoticeRef.current
+    migrationNoticeRef.current = null
+    if (migratedNotice) {
+      // Show the migration even when persistence is unavailable; only saved recall depends on localStorage.
+      setNotice({ type: 'info', message: migratedNotice.message })
+    }
     saveCfg({ provider, model, apiKey, baseUrl, reasoningEffort })
+    if (migratedNotice) {
+      storeProviderNotice(migratedNotice)
+    }
   }, [provider, model, apiKey, baseUrl, reasoningEffort])
 
   // Persist history whenever messages change (strip streaming markers before saving)
@@ -150,6 +262,15 @@ export default function ChatPane() {
 
   function onReasoningEffortChange(effort: ReasoningEffort) {
     setReasoningEffort(effort)
+  }
+
+  function dismissProviderNotice() {
+    try {
+      localStorage.removeItem(LS_NOTICE)
+    } catch (error) {
+      console.warn('Failed to dismiss provider notice from storage.', { error, key: LS_NOTICE })
+    }
+    setNotice(null)
   }
 
   function toggleExpert() {
@@ -250,15 +371,13 @@ export default function ChatPane() {
             .map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
 
-        {provider === 'codexcli' && (
-          <select value={reasoningEffort} onChange={(e) => onReasoningEffortChange(e.target.value as ReasoningEffort)}
-                  title="GPT reasoning effort"
-                  style={{ ...inputStyle, width: 72 }}>
-            {REASONING_EFFORTS.map((effort) => (
-              <option key={effort} value={effort}>{effort}</option>
-            ))}
-          </select>
-        )}
+        <select value={reasoningEffort} onChange={(e) => onReasoningEffortChange(e.target.value as ReasoningEffort)}
+                title="AI model reasoning effort"
+                style={{ ...inputStyle, width: 72 }}>
+          {REASONING_EFFORTS.map((effort) => (
+            <option key={effort} value={effort}>{effort}</option>
+          ))}
+        </select>
 
         <button onClick={toggleExpert}
                 title={expertMode ? 'Expert mode ON — click to disable' : 'Enable expert mode (deep research loop)'}
@@ -309,6 +428,19 @@ export default function ChatPane() {
 
       {/* ── message list ── */}
       <div ref={scroller} style={{ flex: 1, overflow: 'auto', padding: 8, fontSize: 11 }}>
+        {notice && (
+          <div role="status" aria-live="polite"
+               style={{ marginBottom: 8, padding: '6px 8px', background: '#101a24',
+                        border: '1px solid #31516d', borderRadius: 4, color: '#aacbe8',
+                        display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ flex: 1 }}>{notice.message}</span>
+            <button onClick={dismissProviderNotice}
+                    style={{ background: 'transparent', color: '#aacbe8', border: '1px solid #31516d',
+                             borderRadius: 3, fontSize: 10, cursor: 'pointer' }}>
+              Dismiss
+            </button>
+          </div>
+        )}
         {msgs.length === 0 && (
           expertMode ? (
             <div style={{ color: '#666', fontStyle: 'italic' }}>

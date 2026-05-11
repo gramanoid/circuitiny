@@ -46,6 +46,7 @@ const hpDK = (side: 'left' | 'right', labels: { id: string; label: string; type:
   headerPins(side, 0.022, 0.0145, labels)
 
 const devkitc: BoardDef = {
+  kind: 'board',
   id: 'esp32-devkitc-v4',
   name: 'ESP32-DevKitC v4',
   version: '0.1.0',
@@ -97,6 +98,7 @@ const devkitc: BoardDef = {
 
 // ESP32-S3-DevKitC-1 N8R8 — 38 pins, same PCB outline as DevKitC (55×28 mm).
 const s3devkitc: BoardDef = {
+  kind: 'board',
   id: 'esp32s3-devkitc-1',
   name: 'ESP32-S3-DevKitC-1 N8R8',
   version: '0.1.0',
@@ -160,6 +162,7 @@ const s3devkitc: BoardDef = {
 
 // ESP32-C3-DevKitM-1 — 22 pins, 43×26 mm.
 const c3devkitm: BoardDef = {
+  kind: 'board',
   id: 'esp32c3-devkitm-1',
   name: 'ESP32-C3-DevKitM-1',
   version: '0.1.0',
@@ -207,6 +210,7 @@ const c3devkitm: BoardDef = {
 
 // ESP32-C6-DevKitC-1 — 30 pins, 55×26 mm.
 const c6devkitc: BoardDef = {
+  kind: 'board',
   id: 'esp32c6-devkitc-1',
   name: 'ESP32-C6-DevKitC-1',
   version: '0.1.0',
@@ -265,6 +269,7 @@ const c6devkitc: BoardDef = {
 // Edge rows run along the long axis (x). USB end = +x.
 // Bottom pads (GPIO3, BAT+, BAT−) sit on the board underside; normal points down (y = -1).
 const xiaoS3: BoardDef = {
+  kind: 'board',
   id: 'xiao-esp32s3',
   name: 'XIAO ESP32S3',
   version: '0.1.0',
@@ -355,6 +360,7 @@ const hpWR = (side: 'left' | 'right', labels: { id: string; label: string; type:
 // Freenove ESP32-WROVER-DEV — 38-pin board with ESP32-WROVER-E module.
 // GPIO16/17 reserved for PSRAM; GPIO6-11 tied to internal flash.
 const freenoveWrover: BoardDef = {
+  kind: 'board',
   id: 'freenove-esp32-wrover-dev',
   name: 'Freenove ESP32-WROVER-DEV',
   version: '0.1.0',
@@ -427,7 +433,35 @@ function applyDefaultCatalogMeta(def: ComponentDef): void {
   def.catalogMeta ??= { trust: 'builtin', confidence: 'high', renderStrategy: def.model ? 'catalog-glb' : 'primitive' }
 }
 
+function validatePinIds(def: ComponentDef | BoardDef): void {
+  const label = isBoardDef(def) ? 'Board' : 'Component'
+  const seen = new Map<string, { original: string; index: number }>()
+  for (const [index, pin] of def.pins.entries()) {
+    const trimmed = pin.id.trim()
+    if (!trimmed) {
+      throw new Error(`${label} ${def.id} has empty pin id at index ${index}.`)
+    }
+    if (trimmed !== pin.id) {
+      throw new Error(`${label} ${def.id} has leading/trailing whitespace in pin id at index ${index}: ${pin.id}`)
+    }
+    const normalized = trimmed.toLowerCase()
+    const existing = seen.get(normalized)
+    if (existing) {
+      const duplicateKind = existing.original === pin.id
+        ? 'duplicate'
+        : 'case-only duplicate'
+      throw new Error(`${label} ${def.id} has ${duplicateKind} pins at indexes ${existing.index} and ${index}: ${existing.original} and ${pin.id}`)
+    }
+    seen.set(normalized, { original: pin.id, index })
+  }
+}
+
+function isBoardDef(def: ComponentDef | BoardDef): def is BoardDef {
+  return def.kind === 'board'
+}
+
 for (const def of Object.values(components)) {
+  validatePinIds(def)
   applyDefaultCatalogMeta(def)
 }
 const boards: Record<string, BoardDef> = {
@@ -438,6 +472,10 @@ const boards: Record<string, BoardDef> = {
   [xiaoS3.id]:          xiaoS3,
   [freenoveWrover.id]:  freenoveWrover,
 }
+for (const def of Object.values(boards)) {
+  validatePinIds(def)
+  applyDefaultCatalogMeta(def)
+}
 const glbBlobs: Record<string, string> = {}   // componentId -> blob URL
 
 export const catalog = {
@@ -447,6 +485,7 @@ export const catalog = {
   listComponents: (): ComponentDef[] => Object.values(components),
   listBoards: (): BoardDef[] => Object.values(boards),
   registerComponent: (def: ComponentDef, glbData?: Uint8Array | null) => {
+    validatePinIds(def)
     applyDefaultCatalogMeta(def)
     components[def.id] = def
     if (glbData) {
@@ -454,6 +493,23 @@ export const catalog = {
       const type = def.model?.toLowerCase().endsWith('.gltf') ? 'model/gltf+json' : 'model/gltf-binary'
       glbBlobs[def.id] = URL.createObjectURL(new Blob([buf], { type }))
     }
+  },
+  registerBoard: (def: BoardDef, glbData?: Uint8Array | null) => {
+    const board: BoardDef = { ...def, kind: 'board' }
+    validatePinIds(board)
+    applyDefaultCatalogMeta(board)
+    boards[board.id] = board
+    if (glbData) {
+      const buf = glbData.slice().buffer as ArrayBuffer
+      const type = board.model?.toLowerCase().endsWith('.gltf') ? 'model/gltf+json' : 'model/gltf-binary'
+      glbBlobs[board.id] = URL.createObjectURL(new Blob([buf], { type }))
+    }
+  },
+  removeBoard: (id: string) => {
+    delete boards[id]
+    const blobUrl = glbBlobs[id]
+    if (blobUrl && typeof URL !== 'undefined') URL.revokeObjectURL(blobUrl)
+    delete glbBlobs[id]
   },
   removeComponent: (id: string) => {
     delete components[id]

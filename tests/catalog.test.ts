@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { catalog } from '../src/catalog'
+import type { BoardDef } from '../src/project/component'
 
 describe('catalog — boards', () => {
   it('registers all 5 boards', () => {
@@ -59,6 +60,35 @@ describe('catalog — boards', () => {
 
   it('returns undefined for unknown board', () => {
     expect(catalog.getBoard('nonexistent')).toBeUndefined()
+  })
+
+  it('can remove dynamically registered boards and their GLB URL', () => {
+    const base = catalog.getBoard('esp32-devkitc-v4')!
+    const board: BoardDef = {
+      ...base,
+      id: 'test-dynamic-board',
+      name: 'Test Dynamic Board',
+    }
+    const previousRevoke = URL.revokeObjectURL
+    const previousCreate = URL.createObjectURL
+    const revoked: string[] = []
+    URL.createObjectURL = () => 'blob:test-dynamic-board'
+    URL.revokeObjectURL = (url: string) => { revoked.push(url) }
+    try {
+      catalog.registerBoard(board, new Uint8Array([1, 2, 3]))
+      expect(catalog.getBoard('test-dynamic-board')).toBeDefined()
+      expect(catalog.getGlbUrl('test-dynamic-board')).toBe('blob:test-dynamic-board')
+
+      catalog.removeBoard('test-dynamic-board')
+
+      expect(catalog.getBoard('test-dynamic-board')).toBeUndefined()
+      expect(catalog.getGlbUrl('test-dynamic-board')).toBeUndefined()
+      expect(revoked).toEqual(['blob:test-dynamic-board'])
+    } finally {
+      URL.revokeObjectURL = previousRevoke
+      URL.createObjectURL = previousCreate
+      catalog.removeBoard('test-dynamic-board')
+    }
   })
 })
 

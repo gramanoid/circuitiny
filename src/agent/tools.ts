@@ -16,6 +16,20 @@ import { lookupPartKnowledge, lookupPartKnowledgeWithWeb } from '../parts/retrie
 import { recommendProjectsFromInventory } from '../parts/recommendations'
 import type { ExaSearchResult, InventoryItem, PartKnowledgeRecord, PhotoCandidate, ProjectRecommendation } from '../parts/types'
 import { componentFromModelAsset, modelAssetById, searchModelAssets, type ModelAssetCandidate } from '../modelLibrary'
+import {
+  buildCodexSceneContext,
+  evaluateAgentActionPolicy,
+  listAgentActionSessions,
+  recordAgentActionSession,
+  validationForAction,
+  type AgentActionKind,
+  type CodexAutonomyTier,
+  type CodexSceneContext,
+} from './visualBuildAgent'
+import { addJumper, createStarterLayoutFromProject, runPhysicalDrc, styleJumper, type PhysicalDrcFinding } from '../physical/breadboard'
+import { analyzeRealityCheck, createRealityCheckSession, realityReadiness, type RealityCheckSession, type RealityObservation } from '../reality/check'
+import { identifyPart, type DatasheetSource, type PartIdentity } from '../identity/datasheets'
+import { CatalogTrustError, DraftCatalogPartError } from '../codegen/trust'
 
 type PartRecommendation = ReturnType<typeof recommendParts>[number]
 const DRAFT_PIN_HORIZONTAL_SPACING_M = 0.003
@@ -119,6 +133,97 @@ export const tools: ToolDef[] = [
         required: ['from', 'to']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'place_part',
+      description: 'Place or move an existing component instance in the 3D scene.',
+      parameters: {
+        type: 'object',
+        properties: {
+          instance: { type: 'string', description: 'Existing component instance, e.g. "led1".' },
+          position: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+        },
+        required: ['instance', 'position'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'move_part',
+      description: 'Typed alias for place_part; move an existing component instance in the 3D scene.',
+      parameters: {
+        type: 'object',
+        properties: {
+          instance: { type: 'string', description: 'Existing component instance, e.g. "led1".' },
+          position: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+        },
+        required: ['instance', 'position'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'connect_pins',
+      description: 'Typed alias for connect; wire two schematic pins together using instance.pin or board.pin refs.',
+      parameters: {
+        type: 'object',
+        properties: {
+          from: { type: 'string' },
+          to: { type: 'string' },
+        },
+        required: ['from', 'to'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'connect_breadboard_holes',
+      description: 'Validate a physical jumper between two breadboard holes in the starter layout and return readable color/path guidance.',
+      parameters: {
+        type: 'object',
+        properties: {
+          from_hole: { type: 'string', description: 'Breadboard hole id, e.g. "a1".' },
+          to_hole: { type: 'string', description: 'Breadboard hole id, e.g. "j10".' },
+          color: { type: 'string', description: 'Optional jumper color.' },
+        },
+        required: ['from_hole', 'to_hole'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_item',
+      description: 'Delete one project item by kind: component instance, net id, or behavior id.',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['component', 'net', 'behavior'] },
+          id: { type: 'string' },
+        },
+        required: ['kind', 'id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_catalog',
+      description: 'Search the local catalog by beginner terms, exact ids, names, family, or category.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+          limit: { type: 'number' },
+        },
+        required: ['query'],
+      },
+    },
   },
   {
     type: 'function',
@@ -525,6 +630,123 @@ export const tools: ToolDef[] = [
         required: ['project_id', 'approved']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_scene_context',
+      description: 'Return Codex visual build-agent context: project, render coverage, DRC, physical DRC, and allowed scoped actions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          autonomy_tier: { type: 'string', enum: ['explain-only', 'draft-edit', 'guided-edit', 'hardware-gated'] },
+          include_physical_layout: { type: 'boolean', description: 'Set true only when physical DRC/layout summary is needed.' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'check_agent_action',
+      description: 'Check whether a scoped Codex action is allowed and what validation/approval it needs.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['inspect', 'add-part', 'place-part', 'move-part', 'delete-item', 'connect', 'connect-breadboard', 'behavior-change', 'code-change', 'catalog-import', 'camera-analysis', 'build', 'flash', 'monitor'] },
+          autonomy_tier: { type: 'string', enum: ['explain-only', 'draft-edit', 'guided-edit', 'hardware-gated'] }
+        },
+        required: ['action', 'autonomy_tier']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_physical_drc',
+      description: 'Run beginner physical breadboard checks using the current project starter physical layout.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'identify_part',
+      description: 'Identify a part from text or markings and return datasheet/source confidence for beginner-safe review.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+          sources: {
+            type: 'array',
+            description: 'Optional learner-approved datasheet/source excerpts.',
+            items: {
+              type: 'object',
+              properties: {
+                url: { type: 'string' },
+                title: { type: 'string' },
+                vendor: { type: 'string' },
+                retrievedAt: { type: 'string' },
+                licenseNote: { type: 'string' },
+                checksum: { type: 'string' },
+                text: { type: 'string' }
+              },
+              required: ['url', 'title', 'retrievedAt', 'licenseNote']
+            }
+          }
+        },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_reality_check',
+      description: 'Run local Reality Check from learner-confirmed observations. Canonical observation fields are id, kind, label, componentInstance, endpoints, confidence, notes, and polarityReversed. Snake_case aliases accepted by normalizeRealityObservation include component_instance, polarity_reversed, confidence_level, note_text, and endpoints. Observed wires use endpoints like "r1.out" and "led1.anode".',
+      parameters: {
+        type: 'object',
+        properties: {
+          observations: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                kind: { type: 'string', enum: ['wire', 'part', 'polarity', 'rail', 'unknown'] },
+                label: { type: 'string' },
+                endpoints: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 2 },
+                confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+                componentInstance: { type: 'string' },
+                polarityReversed: { type: 'boolean', description: 'Canonical flag for reversed polarity observations.' },
+                notes: { type: 'string' }
+              }
+            }
+          },
+          session_type: { type: 'string', enum: ['camera', 'photo'] },
+          camera_granted: { type: 'boolean' },
+          image_storage_allowed: { type: 'boolean' },
+          ai_vision_approved: { type: 'boolean' }
+        },
+        required: ['observations']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_agent_action_history',
+      description: 'Return recent scoped Codex tool sessions with changed objects and validation results.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'rollback_last_agent_action',
+      description: 'Rollback the most recent project mutation using Circuitiny undo history.',
+      parameters: { type: 'object', properties: {} }
+    }
   }
 ]
 
@@ -585,9 +807,38 @@ export interface CreateDraftPartResult {
   skipped?: 'already_in_catalog'
 }
 
+export interface GetSceneContextResult {
+  context: CodexSceneContext
+}
+
+export interface RunPhysicalDrcResult {
+  errors: number
+  warnings: number
+  findings: PhysicalDrcFinding[]
+  physicalLayout: {
+    placements: number
+    jumpers: number
+    template: string
+  }
+}
+
+export interface IdentifyPartResult {
+  identity: PartIdentity
+  nextStep: string
+}
+
+export interface RunRealityCheckResult {
+  session: RealityCheckSession
+  readiness: 'blocked' | 'warn' | 'pass'
+}
+
 export interface RunDrcResult {
   errors: number
   warnings: number
+}
+
+export interface AgentActionHistoryResult {
+  sessions: ReturnType<typeof listAgentActionSessions>
 }
 
 export type ToolResult = { ok: true; data: unknown } | { ok: false; error: string }
@@ -597,7 +848,9 @@ export async function execTool(
   args: Record<string, any>,
   ctx?: ExecContext
 ): Promise<ToolResult> {
+  const beforeProject = useStore.getState().project
   const result = await executeInternal(name, args, ctx)
+  recordSuccessfulAction(name, result, beforeProject)
 
   // Repeated-failure guard — if the same (tool, args) fails twice, append a hint
   // so the model stops hammering the same bad call and either tries something
@@ -668,7 +921,12 @@ async function handleAddComponent(args: Record<string, any>): Promise<ToolResult
     return { ok: false, error: `unknown componentId "${args.componentId}". Closest catalog ids: [${near.join(', ')}]. Call list_catalog for the full list.` }
   }
   const before = s.project.components.length
-  s.addComponent(args.componentId)
+  try {
+    s.addComponent(args.componentId)
+  } catch (error) {
+    if (error instanceof DraftCatalogPartError || error instanceof CatalogTrustError) return { ok: false, error: error.message }
+    throw error
+  }
   const after = useStore.getState().project.components
   const added = after[after.length - 1]
   return { ok: true, data: { instance: added.instance, componentId: added.componentId, index: before } }
@@ -724,6 +982,83 @@ async function handleConnect(args: Record<string, any>): Promise<ToolResult> {
       }
     }
   }
+}
+
+async function handlePlacePart(args: Record<string, any>): Promise<ToolResult> {
+  const instance = String(args.instance ?? '').trim()
+  const position = normalizePosition(args.position)
+  if (!instance) return { ok: false, error: 'place_part requires instance.' }
+  if (!position) return { ok: false, error: 'place_part position must be an array of three finite numbers.' }
+  const { project, moveComponent } = useStore.getState()
+  if (!project.components.some((component) => component.instance === instance)) {
+    return { ok: false, error: `No component instance "${instance}" exists.` }
+  }
+  moveComponent(instance, position)
+  return { ok: true, data: { instance, position } }
+}
+
+async function handleConnectBreadboardHoles(args: Record<string, any>): Promise<ToolResult> {
+  const fromHole = String(args.from_hole ?? '').trim().toLowerCase()
+  const toHole = String(args.to_hole ?? '').trim().toLowerCase()
+  const layout = createStarterLayoutFromProject(useStore.getState().project)
+  if (!layout.template.holes[fromHole]) return { ok: false, error: `Unknown breadboard hole "${fromHole}".` }
+  if (!layout.template.holes[toHole]) return { ok: false, error: `Unknown breadboard hole "${toHole}".` }
+  const nextLayout = addJumper(layout, {
+    id: `agent-jumper-${layout.jumpers.length + 1}`,
+    fromHole,
+    toHole,
+    ...(typeof args.color === 'string' && args.color.trim() ? { color: args.color.trim() } : {}),
+  })
+  const jumper = nextLayout.jumpers[nextLayout.jumpers.length - 1]
+  const findings = runPhysicalDrc(nextLayout, useStore.getState().project)
+  return {
+    ok: true,
+    data: {
+      jumper: styleJumper(jumper, nextLayout.jumpers.length - 1),
+      physicalDrc: {
+        errors: findings.filter((finding) => finding.severity === 'error').length,
+        warnings: findings.filter((finding) => finding.severity === 'warning').length,
+      },
+      note: 'Starter physical layout is regenerated from the project; use this as validated jumper guidance until persisted physical editing lands.',
+    },
+  }
+}
+
+async function handleDeleteItem(args: Record<string, any>): Promise<ToolResult> {
+  const kind = String(args.kind ?? '')
+  const id = String(args.id ?? '').trim()
+  if (!id) return { ok: false, error: 'delete_item requires id.' }
+  const store = useStore.getState()
+  if (kind === 'component') return handleRemoveComponent({ instance: id })
+  if (kind === 'net') return handleRemoveNet({ id })
+  if (kind === 'behavior') {
+    if (!store.project.behaviors.some((behavior) => behavior.id === id)) return { ok: false, error: `No behavior "${id}" exists.` }
+    store.removeBehavior(id)
+    return { ok: true, data: { removed: id, kind } }
+  }
+  return { ok: false, error: `delete_item kind must be component, net, or behavior; got "${kind}".` }
+}
+
+async function handleSearchCatalog(args: Record<string, any>): Promise<ToolResult> {
+  const query = String(args.query ?? '').trim().toLowerCase()
+  const limit = Math.max(1, Math.min(20, Number(args.limit) || 10))
+  if (!query) return { ok: false, error: 'search_catalog requires query.' }
+  const matches = catalog.listComponents()
+    .filter((component) => [component.id, component.name, component.family, component.category, component.docs?.notes]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+      .includes(query))
+    .slice(0, limit)
+    .map((component) => ({
+      id: component.id,
+      name: component.name,
+      family: component.family,
+      category: component.category,
+      pins: component.pins.map((pin) => pin.id),
+      trust: component.catalogMeta?.trust ?? 'user-installed',
+    }))
+  return { ok: true, data: { query, matches } }
 }
 
 async function handleRunDrc(): Promise<ToolResult> {
@@ -1414,6 +1749,241 @@ async function handleCreateRecipeFromProject(args: Record<string, any>): Promise
   }
 }
 
+async function handleGetSceneContext(args: Record<string, any>): Promise<ToolResult> {
+  const { project, selected } = useStore.getState()
+  const autonomyTier = normalizeAutonomyTier(args.autonomy_tier)
+  const physicalLayout = args.include_physical_layout === true
+    ? createStarterLayoutFromProject(project)
+    : undefined
+  return {
+    ok: true,
+    data: {
+      context: buildCodexSceneContext({ project, selected, physicalLayout, autonomyTier }),
+      nextStep: 'Use scoped Circuitiny tools only; run validation after edits before claiming readiness.',
+    },
+  }
+}
+
+async function handleCheckAgentAction(args: Record<string, any>): Promise<ToolResult> {
+  const action = normalizeAgentAction(args.action)
+  if (!action) {
+    return {
+      ok: false,
+      error: `Invalid action "${String(args.action ?? '')}". Valid actions: ${VALID_AGENT_ACTIONS.join(', ')}.`,
+    }
+  }
+  const autonomyTier = normalizeAutonomyTier(args.autonomy_tier)
+  return { ok: true, data: evaluateAgentActionPolicy(action, autonomyTier) }
+}
+
+async function handleRunPhysicalDrc(): Promise<ToolResult> {
+  const { project } = useStore.getState()
+  const layout = createStarterLayoutFromProject(project)
+  const findings = runPhysicalDrc(layout, project)
+  return {
+    ok: true,
+    data: {
+      errors: findings.filter((finding) => finding.severity === 'error').length,
+      warnings: findings.filter((finding) => finding.severity === 'warning').length,
+      findings,
+      physicalLayout: {
+        placements: layout.placements.length,
+        jumpers: layout.jumpers.length,
+        template: layout.template.id,
+      },
+    },
+  }
+}
+
+async function handleIdentifyPart(args: Record<string, any>): Promise<ToolResult> {
+  const query = String(args.query ?? '').trim()
+  if (!query) return { ok: false, error: 'identify_part requires query.' }
+  const sources = normalizeDatasheetSources(args.sources)
+  const identity = identifyPart(query, sources)
+  return {
+    ok: true,
+    data: {
+      identity,
+      nextStep: identity.reviewRequired
+        ? 'Review source, pinout, voltage, and companion parts before using this for hardware.'
+        : 'Reviewed local metadata is available for normal Circuitiny use.',
+    },
+  }
+}
+
+async function handleRunRealityCheck(args: Record<string, any>): Promise<ToolResult> {
+  const rawObservations = Array.isArray(args.observations) ? args.observations : []
+  if (rawObservations.length === 0) return { ok: false, error: 'run_reality_check requires at least one observation.' }
+  const invalidObservationIndex = rawObservations.findIndex((observation) =>
+    !observation || typeof observation !== 'object' || Array.isArray(observation))
+  if (invalidObservationIndex >= 0) {
+    return { ok: false, error: `Observation ${invalidObservationIndex + 1} must be an object.` }
+  }
+  const invalidEndpointIndex = rawObservations.findIndex((observation) => {
+    const endpoints = (observation as { endpoints?: unknown }).endpoints
+    return Array.isArray(endpoints) && endpoints.length !== 0 && (endpoints.length !== 2 || !hasValidEndpointPair(endpoints))
+  })
+  if (invalidEndpointIndex >= 0) {
+    return { ok: false, error: `Observation ${invalidEndpointIndex + 1} endpoints must contain exactly two endpoints in instance.pin format.` }
+  }
+  const project = useStore.getState().project
+  const invalidComponentIndex = rawObservations.findIndex((observation) => {
+    const componentInstance = (observation as { componentInstance?: unknown; component_instance?: unknown }).componentInstance
+      ?? (observation as { component_instance?: unknown }).component_instance
+    return typeof componentInstance === 'string' &&
+      (!isComponentInstanceRef(componentInstance) || !project.components.some((component) => component.instance === componentInstance))
+  })
+  if (invalidComponentIndex >= 0) {
+    return { ok: false, error: `Observation ${invalidComponentIndex + 1} componentInstance must be a valid existing project component instance.` }
+  }
+  const observations = rawObservations.map(normalizeRealityObservation)
+  const session = createRealityCheckSession(normalizeRealityImageSource(args.session_type), {
+    cameraGranted: args.camera_granted === true,
+    imageStorageAllowed: args.image_storage_allowed === true,
+    aiVisionAllowed: args.ai_vision_approved === true,
+  }, observations)
+  const drcResult = runDrc(project)
+  const analyzed = analyzeRealityCheck(project, session, drcResult)
+  return {
+    ok: true,
+    data: {
+      session: analyzed,
+      readiness: realityReadiness(analyzed.findings),
+    },
+  }
+}
+
+async function handleGetAgentActionHistory(): Promise<ToolResult> {
+  return { ok: true, data: { sessions: listAgentActionSessions() } satisfies AgentActionHistoryResult }
+}
+
+async function handleRollbackLastAgentAction(): Promise<ToolResult> {
+  const store = useStore.getState()
+  const before = store.project
+  store.undo()
+  const after = useStore.getState().project
+  if (after === before) return { ok: false, error: 'No project history is available to rollback.' }
+  return {
+    ok: true,
+    data: {
+      project: after.name,
+      changedObjects: changedObjectsBetween(before, after),
+    },
+  }
+}
+
+function normalizeRealityImageSource(value: unknown): 'camera' | 'photo' {
+  if (value === 'camera') return 'camera'
+  if (value === 'photo') return 'photo'
+  console.warn('Unexpected Reality Check image source; defaulting to photo.', { value })
+  return 'photo'
+}
+
+const ACTION_BY_TOOL: Partial<Record<string, AgentActionKind>> = {
+  add_component: 'add-part',
+  place_part: 'place-part',
+  move_part: 'move-part',
+  remove_component: 'delete-item',
+  remove_behavior: 'delete-item',
+  remove_net: 'delete-item',
+  delete_item: 'delete-item',
+  connect: 'connect',
+  connect_pins: 'connect',
+  connect_breadboard_holes: 'connect-breadboard',
+  set_behavior: 'behavior-change',
+  blink: 'behavior-change',
+  set_on_boot: 'behavior-change',
+  on_button_press: 'behavior-change',
+  write_firmware: 'code-change',
+  create_draft_part: 'catalog-import',
+  import_model_candidate: 'catalog-import',
+}
+
+function recordSuccessfulAction(name: string, result: ToolResult, beforeProject: Project): void {
+  if (!result.ok) return
+  const action = ACTION_BY_TOOL[name]
+  if (!action) return
+  const afterProject = useStore.getState().project
+  const changedObjects = changedObjectsBetween(beforeProject, afterProject)
+  recordAgentActionSession({
+    tool: name,
+    action,
+    changedObjects,
+    validationResults: validationResultsForAction(action, afterProject),
+    beginnerSummary: changedObjects.length > 0
+      ? `${name} changed ${changedObjects.length} project item${changedObjects.length === 1 ? '' : 's'}.`
+      : `${name} returned guidance without changing the saved project.`,
+  })
+}
+
+function validationResultsForAction(action: AgentActionKind, project: Project): Record<string, boolean | { ok: boolean; artifacts?: string[]; files?: string[]; outputIds?: string[] }> {
+  const results: Record<string, boolean | { ok: boolean; artifacts?: string[]; files?: string[]; outputIds?: string[] }> = {}
+  for (const validation of validationForAction(action)) {
+    if (validation === 'drc') {
+      const drc = runDrc(project)
+      results[validation] = { ok: drc.errors.length === 0, artifacts: [...drc.errors, ...drc.warnings].map((finding) => finding.id) }
+    } else if (validation === 'physical-drc') {
+      const findings = runPhysicalDrc(createStarterLayoutFromProject(project), project)
+      results[validation] = { ok: findings.every((finding) => finding.severity !== 'error'), artifacts: findings.map((finding) => finding.id) }
+    } else if (validation === 'code-inspection') {
+      const files = Object.keys(project.customCode ?? {})
+      results[validation] = { ok: files.length > 0, files }
+    } else if (validation === 'source-license-review' || validation === 'catalog-draft-review') {
+      results[validation] = true
+    } else {
+      results[validation] = false
+    }
+  }
+  return results
+}
+
+function changedObjectsBetween(before: Project, after: Project): string[] {
+  const changes: string[] = []
+  const beforeComponents = new Map(before.components.map((component) => [component.instance, JSON.stringify(component)]))
+  const afterComponents = new Map(after.components.map((component) => [component.instance, JSON.stringify(component)]))
+  for (const [instance, component] of afterComponents) {
+    const previous = beforeComponents.get(instance)
+    if (!previous) changes.push(`component:${instance}`)
+    else if (previous !== component) changes.push(`component:${instance}`)
+  }
+  for (const instance of beforeComponents.keys()) {
+    if (!afterComponents.has(instance)) changes.push(`component:${instance}`)
+  }
+
+  const beforeNets = new Map(before.nets.map((net) => [net.id, JSON.stringify(net)]))
+  const afterNets = new Map(after.nets.map((net) => [net.id, JSON.stringify(net)]))
+  for (const [id, net] of afterNets) {
+    const previous = beforeNets.get(id)
+    if (!previous || previous !== net) changes.push(`net:${id}`)
+  }
+  for (const id of beforeNets.keys()) {
+    if (!afterNets.has(id)) changes.push(`net:${id}`)
+  }
+
+  const beforeBehaviors = new Map(before.behaviors.map((behavior) => [behavior.id, JSON.stringify(behavior)]))
+  const afterBehaviors = new Map(after.behaviors.map((behavior) => [behavior.id, JSON.stringify(behavior)]))
+  for (const [id, behavior] of afterBehaviors) {
+    const previous = beforeBehaviors.get(id)
+    if (!previous || previous !== behavior) changes.push(`behavior:${id}`)
+  }
+  for (const id of beforeBehaviors.keys()) {
+    if (!afterBehaviors.has(id)) changes.push(`behavior:${id}`)
+  }
+
+  const beforeFiles = before.customCode ?? {}
+  const afterFiles = after.customCode ?? {}
+  for (const file of new Set([...Object.keys(beforeFiles), ...Object.keys(afterFiles)])) {
+    if (beforeFiles[file] !== afterFiles[file]) changes.push(`code:${file}`)
+  }
+  return changes
+}
+
+function normalizePosition(value: unknown): [number, number, number] | null {
+  if (!Array.isArray(value) || value.length !== 3) return null
+  const position = value.map(Number)
+  return position.every(Number.isFinite) ? position as [number, number, number] : null
+}
+
 function draftComponentFromRecommendation(rec: ReturnType<typeof recommendParts>[number]): ComponentDef {
   const pinReviewNotes: string[] = []
   const pins = rec.importantPins.map((p, i) => ({
@@ -1492,6 +2062,12 @@ const HANDLERS: Record<string, Handler> = {
   remove_component: (args) => handleRemoveComponent(args),
   remove_net:       (args) => handleRemoveNet(args),
   connect:          (args) => handleConnect(args),
+  connect_pins:     (args) => handleConnect(args),
+  place_part:       (args) => handlePlacePart(args),
+  move_part:        (args) => handlePlacePart(args),
+  connect_breadboard_holes: (args) => handleConnectBreadboardHoles(args),
+  delete_item:      (args) => handleDeleteItem(args),
+  search_catalog:   (args) => handleSearchCatalog(args),
   run_drc:          () => handleRunDrc(),
   read_firmware:    (args) => handleReadFirmware(args),
   write_firmware:   (args) => handleWriteFirmware(args),
@@ -1518,6 +2094,13 @@ const HANDLERS: Record<string, Handler> = {
   import_model_candidate: (args, ctx) => handleImportModelCandidate(args, ctx),
   recommend_projects_from_inventory: (args) => handleRecommendProjectsFromInventory(args),
   create_recipe_from_project: (args) => handleCreateRecipeFromProject(args),
+  get_scene_context: (args) => handleGetSceneContext(args),
+  check_agent_action: (args) => handleCheckAgentAction(args),
+  run_physical_drc: () => handleRunPhysicalDrc(),
+  identify_part: (args) => handleIdentifyPart(args),
+  run_reality_check: (args) => handleRunRealityCheck(args),
+  get_agent_action_history: () => handleGetAgentActionHistory(),
+  rollback_last_agent_action: () => handleRollbackLastAgentAction(),
 }
 
 async function executeInternal(
@@ -1595,4 +2178,122 @@ function pinHint(project: Project, ref: string): string {
   }
   const near = closestMatches(pinId, pinIds, 5)
   return `Closest pins on "${owner}": [${near.join(', ')}]. Call get_project or list_catalog for the full pin list.`
+}
+
+function normalizeAutonomyTier(value: unknown): CodexAutonomyTier {
+  if (value === 'explain-only' || value === 'draft-edit' || value === 'guided-edit' || value === 'hardware-gated') {
+    return value
+  }
+  return 'guided-edit'
+}
+
+const VALID_AGENT_ACTIONS = [
+  'inspect',
+  'add-part',
+  'place-part',
+  'move-part',
+  'delete-item',
+  'connect',
+  'connect-breadboard',
+  'behavior-change',
+  'code-change',
+  'catalog-import',
+  'camera-analysis',
+  'build',
+  'flash',
+  'monitor',
+] as const satisfies readonly AgentActionKind[]
+
+type AssertNoMissingAgentActions<T extends never> = T
+type _MissingAgentActions = AssertNoMissingAgentActions<Exclude<AgentActionKind, typeof VALID_AGENT_ACTIONS[number]>>
+
+function normalizeAgentAction(value: unknown): AgentActionKind | null {
+  if (typeof value !== 'string') return null
+  return (VALID_AGENT_ACTIONS as readonly string[]).includes(value) ? value as AgentActionKind : null
+}
+
+function normalizeRealityObservation(value: unknown, index: number): RealityObservation {
+  const record = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const normalized = {
+    componentInstance: record.componentInstance ?? record.component_instance,
+    confidence: record.confidence ?? record.confidence_level,
+    notes: record.notes ?? record.note_text,
+    polarityReversed: record.polarityReversed ?? record.polarity_reversed,
+  }
+  const rawEndpoints = Array.isArray(record.endpoints) ? record.endpoints.map((endpoint) => String(endpoint)) : []
+  const endpoints = rawEndpoints.length === 2 && isPinRef(rawEndpoints[0]) && isPinRef(rawEndpoints[1])
+    ? [rawEndpoints[0], rawEndpoints[1]] as [string, string]
+    : undefined
+  return {
+    id: String(record.id ?? `obs-${index + 1}`),
+    kind: normalizeObservationKind(record.kind),
+    label: String(record.label ?? `Observation ${index + 1}`),
+    ...(endpoints ? { endpoints } : {}),
+    ...(typeof normalized.componentInstance === 'string' ? { componentInstance: normalized.componentInstance } : {}),
+    ...(normalized.polarityReversed === true ? { polarityReversed: true } : {}),
+    confidence: normalizeObservationConfidence(normalized.confidence ?? 'low'),
+    ...(typeof normalized.notes === 'string' ? { notes: normalized.notes } : {}),
+  }
+}
+
+function isPinRef(value: string): boolean {
+  const parts = value.trim().split('.')
+  const owner = parts[0]?.trim() ?? ''
+  const pin = parts[1]?.trim() ?? ''
+  const ownerPart = /^[A-Za-z](?:[A-Za-z0-9]|[-_](?=[A-Za-z0-9]))*$/
+  // Pin IDs may start with digits for board rails such as board.3v3.
+  const pinPart = /^[A-Za-z0-9](?:[A-Za-z0-9]|[-_](?=[A-Za-z0-9]))*$/
+  return parts.length === 2 &&
+    owner.length >= 1 &&
+    owner.length <= 64 &&
+    pin.length >= 1 &&
+    pin.length <= 64 &&
+    ownerPart.test(owner) &&
+    pinPart.test(pin)
+}
+
+function isComponentInstanceRef(value: string): boolean {
+  return /^[A-Za-z](?:[A-Za-z0-9]|[-_](?=[A-Za-z0-9]))*$/.test(value.trim())
+}
+
+function hasValidEndpointPair(endpoints: unknown[]): boolean {
+  return endpoints.length >= 2 &&
+    typeof endpoints[0] === 'string' &&
+    typeof endpoints[1] === 'string' &&
+    isPinRef(endpoints[0]) &&
+    isPinRef(endpoints[1])
+}
+
+function normalizeDatasheetSources(value: unknown): DatasheetSource[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((source): DatasheetSource | null => {
+      if (!source || typeof source !== 'object') return null
+      const record = source as Record<string, unknown>
+      const url = typeof record.url === 'string' ? record.url.trim() : ''
+      const title = typeof record.title === 'string' ? record.title.trim() : ''
+      const retrievedAt = typeof record.retrievedAt === 'string' ? record.retrievedAt.trim() : ''
+      const licenseNote = typeof record.licenseNote === 'string' ? record.licenseNote.trim() : ''
+      if (!url || !title || !retrievedAt || !licenseNote) return null
+      return {
+        url,
+        title,
+        retrievedAt,
+        licenseNote,
+        ...(typeof record.vendor === 'string' && record.vendor.trim() ? { vendor: record.vendor.trim() } : {}),
+        ...(typeof record.checksum === 'string' && record.checksum.trim() ? { checksum: record.checksum.trim() } : {}),
+        ...(typeof record.text === 'string' ? { text: record.text } : {}),
+      }
+    })
+    .filter((source): source is DatasheetSource => !!source)
+}
+
+function normalizeObservationKind(value: unknown): RealityObservation['kind'] {
+  if (value === 'wire' || value === 'part' || value === 'polarity' || value === 'rail' || value === 'unknown') return value
+  return 'unknown'
+}
+
+function normalizeObservationConfidence(value: unknown): RealityObservation['confidence'] {
+  if (value === 'high' || value === 'medium' || value === 'low') return value
+  return 'low'
 }

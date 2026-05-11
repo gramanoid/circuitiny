@@ -1,4 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import type { CodexCliReasoningEffort } from '../src/agent/reasoningEffort'
+import type { IdfStartOptions } from '../src/global'
 
 export interface IdfLogEvent { runId: string; stream: 'stdout' | 'stderr'; text: string }
 export interface IdfExitEvent { runId: string; code: number | null; signal: string | null }
@@ -16,7 +18,7 @@ export interface ModelInstallResult {
   error?: string
 }
 
-const api = {
+const api: Window['espAI'] = {
   pickGlb: (): Promise<{ path: string; data: Uint8Array } | null> =>
     ipcRenderer.invoke('pickGlb'),
   pickComponent: (): Promise<{ jsonPath: string; json: string; glbData: Uint8Array | null; glbName: string | null } | null> =>
@@ -38,8 +40,7 @@ const api = {
     ipcRenderer.invoke('projectWrite', name, target, files),
   listSerialPorts: (): Promise<string[]> =>
     ipcRenderer.invoke('listSerialPorts'),
-  idfStart: (opts: { name: string; target: string; op: 'build' | 'flash' | 'monitor' | 'clean'; port?: string }):
-    Promise<{ runId: string; cwd: string; cmd: string }> =>
+  idfStart: (opts: IdfStartOptions): Promise<{ runId: string; cwd: string; cmd: string }> =>
     ipcRenderer.invoke('idfStart', opts),
   idfStop: (runId: string): Promise<{ ok: boolean; reason?: string }> =>
     ipcRenderer.invoke('idfStop', runId),
@@ -83,7 +84,7 @@ const api = {
     runId?: string
     prompt: string
     model: string
-    reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+    reasoningEffort?: CodexCliReasoningEffort
     includeScreenshot?: boolean
   }): Promise<{ ok: boolean; text?: string; error?: string }> =>
     ipcRenderer.invoke('codexChat', opts),
@@ -95,7 +96,7 @@ const api = {
     path: string
     notes?: string
     model?: string
-    reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+    reasoningEffort?: CodexCliReasoningEffort
   }): Promise<{ ok: boolean; text?: string; error?: string }> =>
     ipcRenderer.invoke('analyzePartsPhoto', opts),
   exaPartSearch: (query: string): Promise<{ ok: boolean; results?: ExaPartSearchResult[]; error?: string }> =>

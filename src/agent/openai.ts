@@ -26,16 +26,18 @@ export async function chatOpenAI(
     if (signal?.aborted) { cb.onError('aborted'); return }
     let resp: Response
     try {
+      const request = {
+        model: cfg.model,
+        messages: conv,
+        tools,
+        tool_choice: 'auto',
+        ...openAiChatCompletionsReasoningPayload(cfg),
+        stream: true,
+      }
       resp = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          model: cfg.model,
-          messages: conv,
-          tools,
-          tool_choice: 'auto',
-          stream: true,
-        }),
+        body: JSON.stringify(request),
         signal,
       })
     } catch (e: any) {
@@ -117,3 +119,72 @@ export async function chatOpenAI(
 }
 
 function safeJson(s: string) { try { return JSON.parse(s) } catch { return {} } }
+
+function openAiChatCompletionsReasoningPayload(cfg: ProviderConfig): { reasoning_effort?: string } {
+  if (cfg.provider !== 'openai') return {}
+  const effort = cfg.reasoningEffort ?? defaultOpenAiReasoningEffort(cfg.model)
+  const reasoningEffort = supportedOpenAiReasoningEffort(cfg.model, effort)
+  return reasoningEffort ? { reasoning_effort: reasoningEffort } : {}
+}
+
+function supportsOpenAiReasoning(model: string): boolean {
+  return GPT5_MODEL_PATTERN.test(model)
+}
+
+const GPT5_MODEL_PATTERN = /^gpt-5(?:$|[.-][a-z0-9][a-z0-9.-]*$)/
+
+// Update when OpenAI releases models with different reasoning effort support.
+const MODEL_REASONING_OVERRIDES: Record<string, Partial<Record<NonNullable<ProviderConfig['reasoningEffort']>, string>>> = {
+  // gpt-5-pro always uses high reasoning in this UI; all visible effort choices
+  // collapse to the only supported request value.
+  'gpt-5-pro': {
+    none: 'high',
+    minimal: 'high',
+    low: 'high',
+    medium: 'high',
+    high: 'high',
+    xhigh: 'high',
+  },
+  'gpt-5.1': {
+    none: 'none',
+    minimal: 'low',
+  },
+}
+
+function defaultOpenAiReasoningEffort(model: string): NonNullable<ProviderConfig['reasoningEffort']> {
+  const normalized = model.trim().toLowerCase()
+  if (normalized.startsWith('gpt-5-pro')) return 'high'
+  if (normalized.startsWith('gpt-5.1')) return 'none'
+  return 'medium'
+}
+
+function supportedOpenAiReasoningEffort(model: string, effort: NonNullable<ProviderConfig['reasoningEffort']>): string | undefined {
+  const normalized = model.trim().toLowerCase()
+  if (!supportsOpenAiReasoning(normalized)) return undefined
+  // Precedence: codex-max xhigh passthrough, exact MODEL_REASONING_OVERRIDES,
+  // longest-prefix family overrides, legacy none/minimal fallbacks, then defaults.
+  const isGpt51 = normalized.startsWith('gpt-5.1')
+  if (isGpt51 && !normalized.startsWith('gpt-5.1-codex-max') && effort === 'xhigh') {
+    return 'high'
+  }
+  const exactOverride = MODEL_REASONING_OVERRIDES[normalized]?.[effort]
+  if (exactOverride) return exactOverride
+  // Longest prefix lets one override cover variants such as gpt-5-pro-preview
+  // while more specific keys still beat general model-family keys.
+  const override = Object.entries(MODEL_REASONING_OVERRIDES)
+    .filter(([key]) => normalized.startsWith(key))
+    .sort(([a], [b]) => b.length - a.length)[0]?.[1]?.[effort]
+  if (override) return override
+  // ChatPane migrates legacy none/minimal values for current users; keep these
+  // provider-level fallbacks for older saved configs and direct API callers.
+  if (effort === 'none') return isGpt51 ? 'none' : 'low'
+  if (effort === 'minimal') return isGpt51 ? 'low' : 'minimal'
+  if (effort === 'xhigh') return 'high'
+  return effort
+}
+
+// Matches gpt-5 plus dot/dash variants such as gpt-5-pro, gpt-5.1, and gpt-5.1-preview.
+// Future OpenAI naming changes may require revisiting the separator and suffix rules.
+function isGpt5Model(model: string): boolean {
+  return supportsOpenAiReasoning(model.trim().toLowerCase())
+}

@@ -2,12 +2,47 @@
   color-scheme: dark;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 13px;
+  --color-focus: #6bb6ff;
+  --color-focus-rgb: 107, 182, 255;
+  --color-error-text: #ffd6d1;
+  --color-error-bg: #140909;
+  --color-recovery-text: #f0c27a;
+  --color-recovery-bg: #17110b;
+  --color-recovery-border: #4a3320;
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; background: #1a1a1a; color: #ddd; }
 button:disabled {
   opacity: 0.45;
   cursor: not-allowed !important;
+}
+.beginner-lab-control {
+  border: 1px solid transparent;
+  transition: border-color 120ms ease, filter 120ms ease, transform 120ms ease;
+}
+.beginner-lab-control:hover {
+  border-color: var(--color-focus);
+  filter: brightness(1.08);
+}
+.beginner-lab-control:active {
+  filter: brightness(0.95);
+  transform: scale(0.99);
+}
+.beginner-lab-control:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(var(--color-focus-rgb), 0.22);
+  transition: border-color 120ms ease, box-shadow 120ms ease, filter 120ms ease, transform 120ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .beginner-lab-control {
+    transition: none;
+  }
+  .beginner-lab-control:hover,
+  .beginner-lab-control:active {
+    filter: none;
+    transform: none;
+  }
 }
 
 .app {

@@ -1,3 +1,7 @@
+import type { CodexCliReasoningEffort } from './reasoningEffort'
+
+export type ProviderReasoningEffort = CodexCliReasoningEffort | 'none'
+
 export interface Msg {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
@@ -21,8 +25,12 @@ export interface ProviderConfig {
   model: string
   apiKey?: string
   baseUrl?: string   // custom Ollama host or OpenRouter base
-  // xhigh is a Codex CLI extension above high for requests where extra compute/time is worth the latency.
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  // ProviderReasoningEffort still accepts legacy "minimal" while reading old
+  // saved configs, but current UI/processing normalizes it to "low"; persist
+  // low/medium/high/xhigh for new settings.
+  reasoningEffort?: ProviderReasoningEffort
+  // Intentionally snake_case because provider request payloads use max_tokens.
+  max_tokens?: number
   maxToolLoops?: number
   expertMode?: boolean
   signal?: AbortSignal

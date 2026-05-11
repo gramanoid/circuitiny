@@ -11,17 +11,26 @@ import {
   type RunDrcResult,
   type SearchModelLibraryResult,
   type ImportModelCandidateResult,
+  type GetSceneContextResult,
+  type RunPhysicalDrcResult,
+  type IdentifyPartResult,
+  type RunRealityCheckResult,
+  type AgentActionHistoryResult,
 } from '../src/agent/tools'
 import { useStore } from '../src/store'
 import { TEMPLATES } from '../src/templates'
 import { emptyProject } from '../src/project/schema'
 import { catalog } from '../src/catalog'
 import { resolveCatalogRender } from '../src/catalog/rendering'
+import { clearAgentActionSessions } from '../src/agent/visualBuildAgent'
+
+const MOCK_RETRIEVED_AT = '2026-05-09T00:00:00.000Z'
 
 describe('agent tools for beginner guidance', () => {
   const previousWindow = (globalThis as any).window
 
   beforeEach(() => {
+    clearAgentActionSessions()
     useStore.getState().loadProject(emptyProject('agent-tool-test', 'esp32-devkitc-v4'))
   })
 
@@ -245,6 +254,199 @@ describe('agent tools for beginner guidance', () => {
       expect(drcData.errors).toBe(0)
     }
   })
+
+  it('exposes scene context through a scoped Codex tool', async () => {
+    useStore.getState().loadProject(makeSeedForAgentTools())
+
+    const scene = await execTool('get_scene_context', { autonomy_tier: 'hardware-gated' })
+    expect(scene.ok).toBe(true)
+    if (scene.ok) {
+      const data = scene.data as GetSceneContextResult
+      expect(data.context.permissions.allowedActions).toContain('flash')
+      expect(data.context.projectSummary.components.map((component) => component.instance)).toContain('led1')
+    }
+  })
+
+  it('offers typed visual mutation aliases and records action history with rollback', async () => {
+    useStore.getState().loadProject(emptyProject('agent-typed-tools-test', 'esp32-devkitc-v4'))
+
+    const added = await execTool('add_component', { componentId: 'led-5mm-red' })
+    expect(added.ok).toBe(true)
+    const instance = getCreatedInstance(added)
+    expect(await execTool('place_part', { instance, position: [0.01, 0.02, 0.03] })).toMatchObject({ ok: true })
+    expect(useStore.getState().project.components.find((component) => component.instance === instance)?.position).toEqual([0.01, 0.02, 0.03])
+
+    const history = await execTool('get_agent_action_history', {})
+    expect(history.ok).toBe(true)
+    if (history.ok) {
+      const data = history.data as AgentActionHistoryResult
+      expect(data.sessions.some((session) => session.tool === 'place_part' && session.changedObjects.includes(`component:${instance}`))).toBe(true)
+    }
+
+    const rolledBack = await execTool('rollback_last_agent_action', {})
+    expect(rolledBack.ok).toBe(true)
+    expect(useStore.getState().project.components.find((component) => component.instance === instance)?.position).not.toEqual([0.01, 0.02, 0.03])
+  })
+
+  it('validates breadboard jumper guidance and catalog search tools', async () => {
+    useStore.getState().loadProject(makeSeedForAgentTools())
+
+    const catalogSearch = await execTool('search_catalog', { query: 'led' })
+    expect(catalogSearch.ok).toBe(true)
+    if (catalogSearch.ok) {
+      expect((catalogSearch.data as { matches: Array<{ id: string }> }).matches.some((match) => match.id === 'led-5mm-red')).toBe(true)
+    }
+
+    const jumper = await execTool('connect_breadboard_holes', { from_hole: 'a1', to_hole: 'j10', color: 'green' })
+    expect(jumper.ok).toBe(true)
+    if (jumper.ok) {
+      expect((jumper.data as { jumper: { pathLabel: string } }).jumper.pathLabel).toBe('A1 -> J10 (green)')
+    }
+  })
+
+  it('exposes physical DRC through a scoped Codex tool', async () => {
+    useStore.getState().loadProject(makeSeedForAgentTools())
+    const physical = await execTool('run_physical_drc', {})
+    expect(physical.ok).toBe(true)
+    if (physical.ok) {
+      const data = physical.data as RunPhysicalDrcResult
+      // Seed layout trace: r1, led1, and btn1 each become one placement; net1 creates the lone jumper from r1.out to led1.anode.
+      expect(data.physicalLayout.placements).toBe(3)
+      expect(data.physicalLayout.jumpers).toBe(1)
+      expect(data.findings).toEqual([])
+    }
+  })
+
+  it('exposes part identity through a scoped Codex tool', async () => {
+    useStore.getState().loadProject(makeSeedForAgentTools())
+    const identity = await execTool('identify_part', { query: 'led-5mm-red' })
+    expect(identity.ok).toBe(true)
+    if (identity.ok) {
+      const data = identity.data as IdentifyPartResult
+      expect(data.identity.id).toBe('led-5mm-red')
+      expect(data.identity.state).toBe('exact')
+      expect(data.identity.confidence).toBe('high')
+    }
+  })
+
+  it('exposes local Reality Check through a scoped Codex tool', async () => {
+    useStore.getState().loadProject(makeSeedForAgentTools())
+    const reality = await execTool('run_reality_check', {
+      observations: [{
+        id: 'wire-1',
+        kind: 'wire',
+        label: 'gray jumper',
+        endpoints: ['r1.out', 'led1.anode'],
+        confidence: 'high',
+      }],
+    })
+    expect(reality.ok).toBe(true)
+    if (reality.ok) {
+      const data = reality.data as RunRealityCheckResult
+      expect(data.readiness).toBe('pass')
+      expect(data.session.findings.some((finding) => finding.kind === 'confirmed')).toBe(true)
+    }
+  })
+
+  it('validates Reality Check observation inputs for scoped Codex calls', async () => {
+    useStore.getState().loadProject(makeSeedForAgentTools())
+
+    const empty = await execTool('run_reality_check', { observations: [] })
+    expect(empty.ok).toBe(false)
+
+    const nonObject = await execTool('run_reality_check', { observations: ['wire-1'] })
+    expect(nonObject.ok).toBe(false)
+    if (!nonObject.ok) expect(nonObject.error).toContain('must be an object')
+
+    const malformed = await execTool('run_reality_check', {
+      observations: [{ id: 'bad', kind: 'wire', label: 'bad', endpoints: ['r1', 'led1.anode'], confidence: 'high' }],
+    })
+    expect(malformed.ok).toBe(false)
+    if (!malformed.ok) expect(malformed.error).toContain('instance.pin')
+
+    const tooManyEndpoints = await execTool('run_reality_check', {
+      observations: [{ id: 'bad-wide-wire', kind: 'wire', label: 'three ended wire', endpoints: ['r1.out', 'led1.anode', 'btn1.a'], confidence: 'high' }],
+    })
+    expect(tooManyEndpoints.ok).toBe(false)
+    if (!tooManyEndpoints.ok) expect(tooManyEndpoints.error).toContain('exactly two endpoints')
+
+    const malformedSpecials = await execTool('run_reality_check', {
+      observations: [{ id: 'bad-specials', kind: 'wire', label: 'bad specials', endpoints: ['bad--owner.out', 'led1.anode'], confidence: 'high' }],
+    })
+    expect(malformedSpecials.ok).toBe(false)
+
+    const malformedComponent = await execTool('run_reality_check', {
+      observations: [{ id: 'bad-component', kind: 'polarity', label: 'bad component', componentInstance: '...bad', polarityReversed: true, confidence: 'high' }],
+    })
+    expect(malformedComponent.ok).toBe(false)
+    if (!malformedComponent.ok) expect(malformedComponent.error).toContain('valid existing project component')
+
+    const shortOwner = await execTool('run_reality_check', {
+      observations: [{ id: 'short-owner', kind: 'wire', label: 'short owner', endpoints: ['a.out', 'b.in'], confidence: 'high' }],
+    })
+    expect(shortOwner.ok).toBe(true)
+
+    const mixed = await execTool('run_reality_check', {
+      observations: [
+        { id: 'wire-1', kind: 'wire', label: 'gray jumper', endpoints: ['r1.out', 'led1.anode'], confidence: 'high' },
+        { id: 'wire-2', kind: 'wire', label: 'uncertain jumper', endpoints: ['btn1.a', 'led1.cathode'], confidence: 'low' },
+      ],
+    })
+    expect(mixed.ok).toBe(true)
+    if (mixed.ok) {
+      const data = mixed.data as RunRealityCheckResult
+      expect(data.session.findings.some((finding) => finding.kind === 'uncertain')).toBe(true)
+      expect(data.session.findings.some((finding) => finding.kind === 'confirmed')).toBe(true)
+    }
+  })
+
+  it('records shorthand behavior tools in action history', async () => {
+    useStore.getState().loadProject(makeSeedForAgentTools())
+
+    const blink = await execTool('blink', { pin: 'led1.anode', period_ms: 500 })
+    expect(blink.ok).toBe(true)
+
+    const history = await execTool('get_agent_action_history', {})
+    expect(history.ok).toBe(true)
+    if (history.ok) {
+      const data = history.data as AgentActionHistoryResult
+      expect(data.sessions[0]).toMatchObject({
+        tool: 'blink',
+        action: 'behavior-change',
+        changedObjects: ['behavior:blink'],
+      })
+    }
+  })
+
+  it('passes learner-approved datasheet sources through part identity lookup', async () => {
+    const identity = await execTool('identify_part', {
+      query: 'mystery sensor',
+      sources: [{
+        url: 'https://example.com/sensor.pdf',
+        title: 'Sensor datasheet',
+        retrievedAt: MOCK_RETRIEVED_AT,
+        licenseNote: 'test fixture',
+        text: 'Pins: VCC GND DATA. Supply voltage 1.8V to 3.6V.',
+      }],
+    })
+
+    expect(identity.ok).toBe(true)
+    if (identity.ok) {
+      const data = identity.data as IdentifyPartResult
+      expect(data.identity.sources).toHaveLength(1)
+      expect(data.identity.extraction.voltageRange).toMatchObject({ min: 1.8, max: 3.6 })
+    }
+  })
+
+  it('rejects invalid scoped Codex actions before policy evaluation', async () => {
+    const result = await execTool('check_agent_action', {
+      action: 'delete-everything',
+      autonomy_tier: 'hardware-gated',
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toContain('Invalid action')
+  })
 })
 
 function getCreatedInstance(result: Awaited<ReturnType<typeof execTool>>): string {
@@ -252,4 +454,21 @@ function getCreatedInstance(result: Awaited<ReturnType<typeof execTool>>): strin
   const data = result.data as { instance?: unknown }
   if (typeof data.instance !== 'string') throw new Error('Expected tool result to include instance')
   return data.instance
+}
+
+function makeSeedForAgentTools() {
+  // The physical layer reads this as 3 component placements (r1, led1, btn1)
+  // and 1 jumper: components create placements, and net1 bridges r1.out to led1.anode.
+  return {
+    ...emptyProject('agent-scene-test', 'esp32-devkitc-v4'),
+    components: [
+      { instance: 'r1', componentId: 'resistor-220r', position: [0, 0, 0] as [number, number, number], pinAssignments: {} },
+      { instance: 'led1', componentId: 'led-5mm-red', position: [0, 0, 0] as [number, number, number], pinAssignments: {} },
+      { instance: 'btn1', componentId: 'button-6mm', position: [0, 0, 0] as [number, number, number], pinAssignments: {} },
+    ],
+    nets: [
+      { id: 'net1', endpoints: ['r1.out', 'led1.anode'] },
+      { id: 'net2', endpoints: ['btn1.a', 'board.gpio4'] },
+    ],
+  }
 }

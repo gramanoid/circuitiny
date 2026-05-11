@@ -1,14 +1,17 @@
 import { create } from 'zustand'
 import { type Project, emptyProject, type PinType, type Behavior } from './project/schema'
 import { catalog } from './catalog'
-import type { PendingSequence } from './sim/evaluate'
+import { DraftCatalogPartError } from './codegen/trust'
+import type { GpioEdge, PendingSequence } from './sim/evaluate'
 import type { CatalogMeta } from './project/component'
 import { getRecipe } from './learning/recipes'
 import type { LearningRecipe } from './learning/types'
+import { clearRecipeProgress, loadRecipeProgress, saveRecipeProgress, type RecipeProgressSaveResult } from './learning/recipeProgress'
 
-export type Mode = 'project' | 'catalog-editor' | 'parts-lab'
+export type Mode = 'project' | 'catalog-editor' | 'parts-lab' | 'beginner-lab'
 
 export interface DraftPin {
+  localId: string
   id: string
   label: string
   type: PinType
@@ -38,6 +41,17 @@ function clampRecipeStep(activeRecipe: LearningRecipe | null, index: number): nu
   return Math.min(maxIndex, Math.max(0, index))
 }
 
+function reportRecipeProgressSave(result: RecipeProgressSaveResult, projectName: string, recipeId: string): void {
+  if (!result.ok) {
+    const reason = 'quotaExceeded' in result
+      ? 'browser storage quota exceeded'
+      : result.reason === 'invalid-project-name'
+        ? 'invalid project name'
+        : 'unknown storage error'
+    console.warn(`Recipe progress was not saved for ${projectName}/${recipeId}: ${reason}.`, result)
+  }
+}
+
 interface State {
   mode: Mode
   project: Project
@@ -55,7 +69,7 @@ interface State {
   simGpios: Record<string, boolean>  // GPIO label -> output state (board-pin label, e.g. "2", "16")
   simStrips: Record<string, Array<[number, number, number]>>  // instance → per-pixel [r,g,b]
   simLog: string[]              // most recent simulation log lines
-  pendingEdges: Array<{ label: string; type: 'rising' | 'falling' }>
+  pendingEdges: GpioEdge[]
   simPendingSequences: PendingSequence[]
   simSpeed: 1 | 2 | 5 | 10     // time multiplier applied each tick
   simMode: 'js' | 'native'
@@ -135,8 +149,26 @@ const newDraft = (): CatalogDraft => ({
   scale: 1, pins: [], selectedPin: null
 })
 
+let draftPinLocalCounter = Math.floor(Math.random() * 1_000_000)
+
+function createDraftPinLocalId(): string {
+  draftPinLocalCounter += 1
+  return `draft-pin-${draftPinLocalCounter}-${Date.now().toString(36)}`
+}
+
+function ensureDraftPinLocalIds(pins: DraftPin[] | undefined): DraftPin[] {
+  return (pins ?? []).map((pin) => ({
+    ...pin,
+    localId: pin.localId ?? createDraftPinLocalId(),
+  }))
+}
+
 function ensureDraftCatalogMeta(draft: CatalogDraft): CatalogDraft {
-  return { ...draft, catalogMeta: draft.catalogMeta ?? defaultDraftCatalogMeta() }
+  return {
+    ...draft,
+    catalogMeta: draft.catalogMeta ?? defaultDraftCatalogMeta(),
+    pins: ensureDraftPinLocalIds(draft.pins),
+  }
 }
 
 // Push current project onto the undo stack before a circuit mutation.
@@ -144,7 +176,7 @@ function snapshot(s: State) {
   return { past: [...s.past.slice(-49), s.project], future: [] as Project[] }
 }
 
-export const useStore = create<State>((set) => ({
+export const useStore = create<State>((set, get) => ({
   mode: 'project',
   project: seed(),
   past: [],
@@ -196,13 +228,55 @@ export const useStore = create<State>((set) => ({
   },
   startRecipe: (activeRecipeId) => {
     const activeRecipe = getRecipe(activeRecipeId)
-    set({ activeRecipeId, activeRecipe, recipeStepIndex: clampRecipeStep(activeRecipe, 0), guidanceVisible: true })
+    if (!activeRecipe) {
+      console.warn(`Recipe not found: ${activeRecipeId}`)
+      return
+    }
+    const s = get()
+    const progress = loadRecipeProgress(s.project.name, activeRecipeId, activeRecipe.steps.length)
+    const recipeStepIndex = clampRecipeStep(activeRecipe, progress?.stepIndex ?? 0)
+    const guidanceVisible = progress?.guidanceVisible ?? true
+    set({ activeRecipeId, activeRecipe, recipeStepIndex, guidanceVisible })
+    if (!progress || progress.stepIndex !== recipeStepIndex || progress.guidanceVisible !== guidanceVisible) {
+      reportRecipeProgressSave(saveRecipeProgress(s.project.name, activeRecipeId, recipeStepIndex, guidanceVisible), s.project.name, activeRecipeId)
+    }
   },
-  setRecipeStep: (recipeStepIndex) => set((s) => ({ recipeStepIndex: clampRecipeStep(s.activeRecipe, recipeStepIndex), guidanceVisible: true })),
-  nextRecipeStep: () => set((s) => ({ recipeStepIndex: clampRecipeStep(s.activeRecipe, s.recipeStepIndex + 1), guidanceVisible: true })),
-  previousRecipeStep: () => set((s) => ({ recipeStepIndex: clampRecipeStep(s.activeRecipe, s.recipeStepIndex - 1), guidanceVisible: true })),
-  showGuidance: () => set({ guidanceVisible: true }),
-  exitGuidance: () => set({ guidanceVisible: false, activeRecipeId: null, activeRecipe: null, recipeStepIndex: 0 }),
+  setRecipeStep: (recipeStepIndex) => {
+    const s = get()
+    const nextIndex = clampRecipeStep(s.activeRecipe, recipeStepIndex)
+    set({ recipeStepIndex: nextIndex, guidanceVisible: true })
+    if (s.activeRecipeId) reportRecipeProgressSave(saveRecipeProgress(s.project.name, s.activeRecipeId, nextIndex, true), s.project.name, s.activeRecipeId)
+  },
+  nextRecipeStep: () => {
+    const s = get()
+    const nextIndex = clampRecipeStep(s.activeRecipe, s.recipeStepIndex + 1)
+    set({ recipeStepIndex: nextIndex, guidanceVisible: true })
+    if (s.activeRecipeId) reportRecipeProgressSave(saveRecipeProgress(s.project.name, s.activeRecipeId, nextIndex, true), s.project.name, s.activeRecipeId)
+  },
+  previousRecipeStep: () => {
+    const s = get()
+    const nextIndex = clampRecipeStep(s.activeRecipe, s.recipeStepIndex - 1)
+    set({ recipeStepIndex: nextIndex, guidanceVisible: true })
+    if (s.activeRecipeId) reportRecipeProgressSave(saveRecipeProgress(s.project.name, s.activeRecipeId, nextIndex, true), s.project.name, s.activeRecipeId)
+  },
+  showGuidance: () => {
+    const s = get()
+    set({ guidanceVisible: true })
+    if (s.activeRecipeId) reportRecipeProgressSave(saveRecipeProgress(s.project.name, s.activeRecipeId, s.recipeStepIndex, true), s.project.name, s.activeRecipeId)
+  },
+  exitGuidance: () => {
+    const s = get()
+    const activeRecipeId = s.activeRecipeId
+    const projectName = s.project.name
+    if (activeRecipeId) {
+      try {
+        clearRecipeProgress(projectName, activeRecipeId)
+      } catch (error) {
+        console.error('Failed to clear recipe progress while exiting guidance.', { projectName, activeRecipeId, error })
+      }
+    }
+    set({ guidanceVisible: false, activeRecipeId: null, activeRecipe: null, recipeStepIndex: 0 })
+  },
   select: (selected) => set({ selected }),
 
   clickPin: (ref) => set((s) => {
@@ -241,7 +315,13 @@ export const useStore = create<State>((set) => ({
     }
   })),
 
-  addComponent: (componentId) => set((s) => {
+  addComponent: (componentId) => {
+    const def = catalog.getComponent(componentId)
+    if (!def) throw new Error(`Unknown component ID: ${componentId}`)
+    if (def.catalogMeta?.trust === 'ai-draft') {
+      throw new DraftCatalogPartError([componentId])
+    }
+    set((s) => {
     const existing = s.project.components.filter((c) => c.componentId === componentId).length
     const base = componentId.split('-')[0].replace(/[^a-z0-9]/gi, '')
     let n = existing + 1
@@ -256,7 +336,8 @@ export const useStore = create<State>((set) => ({
       }]},
       selected: instance
     }
-  }),
+    })
+  },
   removeComponent: (instance) => set((s) => ({
     ...snapshot(s), dirty: true,
     project: {
@@ -379,13 +460,22 @@ export const useStore = create<State>((set) => ({
   addDraftPin: (position, normal) =>
     set((s) => {
       const id = `pin${s.draft.pins.length + 1}`
-      const pin: DraftPin = { id, label: id, type: 'digital_io', position, normal }
+      const pin: DraftPin = { localId: createDraftPinLocalId(), id, label: id, type: 'digital_io', position, normal }
       return { draft: { ...s.draft, pins: [...s.draft.pins, pin], selectedPin: id } }
     }),
   updateDraftPin: (id, patch) =>
-    set((s) => ({
-      draft: { ...s.draft, pins: s.draft.pins.map((p) => p.id === id ? { ...p, ...patch } : p) }
-    })),
+    set((s) => {
+      const nextSelectedPin = typeof patch.id === 'string' && s.draft.selectedPin === id
+        ? patch.id
+        : s.draft.selectedPin
+      return {
+        draft: {
+          ...s.draft,
+          selectedPin: nextSelectedPin,
+          pins: s.draft.pins.map((p) => p.id === id ? { ...p, ...patch, localId: p.localId } : p),
+        },
+      }
+    }),
   removeDraftPin: (id) =>
     set((s) => ({
       draft: { ...s.draft, pins: s.draft.pins.filter((p) => p.id !== id),

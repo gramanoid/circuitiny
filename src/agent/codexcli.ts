@@ -224,7 +224,7 @@ export async function chatCodexCli(
         runId,
         prompt: formatConversation(localConv),
         model: cfg.model || 'gpt-5.5',
-        reasoningEffort: cfg.reasoningEffort || 'high',
+        reasoningEffort: codexCliReasoningEffort(cfg.reasoningEffort),
         includeScreenshot: true,
       }, CODEX_CHAT_TIMEOUT_MS)
     } catch (err) {
@@ -278,4 +278,9 @@ export async function chatCodexCli(
     }
   }
   cb.onError(`Max tool loops (${maxLoops}) reached. Partial conversation tail: ${JSON.stringify(localConv.slice(-4))}`)
+}
+
+function codexCliReasoningEffort(effort: ProviderConfig['reasoningEffort']): Parameters<Window['espAI']['codexChat']>[0]['reasoningEffort'] {
+  if (effort === 'none' || effort === 'minimal') return 'low'
+  return effort ?? 'high'
 }

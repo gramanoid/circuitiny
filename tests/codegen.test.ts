@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { generate } from '../src/codegen/generate'
 import { makeProject, makeSeedProject } from './helpers'
 import type { Project } from '../src/project/schema'
+import { catalog } from '../src/catalog'
+import { CatalogTrustError, DraftCatalogPartError } from '../src/codegen/trust'
 
 function seedWithBehaviors(): Project {
   return {
@@ -26,6 +28,96 @@ function seedWithBehaviors(): Project {
 }
 
 describe('codegen — includes', () => {
+  it('blocks code generation when a project uses AI draft catalog parts', () => {
+    catalog.registerComponent({
+      id: 'draft-sensor',
+      name: 'Draft Sensor',
+      version: '0.1.0',
+      category: 'sensor',
+      model: '',
+      pins: [{ id: 'sig', label: 'SIG', type: 'digital_io', position: [0, 0, 0], normal: [0, -1, 0] }],
+      catalogMeta: { trust: 'ai-draft', confidence: 'low', renderStrategy: 'generic-block', reviewNotes: ['Review pinout before hardware use.'] },
+    })
+    try {
+      const project = {
+        ...makeProject(),
+        components: [{ instance: 'sensor1', componentId: 'draft-sensor', position: [0, 0, 0] as [number, number, number], pinAssignments: {} }],
+        nets: [],
+      }
+      expect(() => generate(project)).toThrowError(expect.objectContaining({
+        name: 'DraftCatalogPartError',
+        message: expect.stringMatching(/Review draft catalog parts/),
+      }))
+    } finally {
+      catalog.removeComponent('draft-sensor')
+    }
+  })
+
+  it('reports every AI draft catalog part blocking code generation', () => {
+    catalog.registerComponent({
+      id: 'draft-sensor',
+      name: 'Draft Sensor',
+      version: '0.1.0',
+      category: 'sensor',
+      model: '',
+      pins: [{ id: 'sig', label: 'SIG', type: 'digital_io', position: [0, 0, 0], normal: [0, -1, 0] }],
+      catalogMeta: { trust: 'ai-draft', confidence: 'low', renderStrategy: 'generic-block' },
+    })
+    catalog.registerComponent({
+      id: 'draft-actuator',
+      name: 'Draft Actuator',
+      version: '0.1.0',
+      category: 'actuator',
+      model: '',
+      pins: [{ id: 'in', label: 'IN', type: 'digital_in', position: [0, 0, 0], normal: [0, -1, 0] }],
+      catalogMeta: { trust: 'ai-draft', confidence: 'low', renderStrategy: 'generic-block' },
+    })
+    try {
+      const project = {
+        ...makeProject(),
+        components: [
+          { instance: 'sensor1', componentId: 'draft-sensor', position: [0, 0, 0] as [number, number, number], pinAssignments: {} },
+          { instance: 'actuator1', componentId: 'draft-actuator', position: [1, 0, 0] as [number, number, number], pinAssignments: {} },
+        ],
+        nets: [],
+      }
+      expect(() => generate(project)).toThrowError(expect.objectContaining({
+        name: 'DraftCatalogPartError',
+        message: expect.stringMatching(/draft-sensor[\s\S]*draft-actuator|draft-actuator[\s\S]*draft-sensor/),
+      }))
+    } finally {
+      catalog.removeComponent('draft-sensor')
+      catalog.removeComponent('draft-actuator')
+    }
+  })
+
+  it('reports draft and missing catalog parts together when both are present', () => {
+    catalog.registerComponent({
+      id: 'draft-sensor',
+      name: 'Draft Sensor',
+      version: '0.1.0',
+      category: 'sensor',
+      model: '',
+      pins: [{ id: 'sig', label: 'SIG', type: 'digital_io', position: [0, 0, 0], normal: [0, -1, 0] }],
+      catalogMeta: { trust: 'ai-draft', confidence: 'low', renderStrategy: 'generic-block' },
+    })
+    try {
+      const project = {
+        ...makeProject(),
+        components: [
+          { instance: 'sensor1', componentId: 'draft-sensor', position: [0, 0, 0] as [number, number, number], pinAssignments: {} },
+          { instance: 'missing1', componentId: 'missing-sensor', position: [1, 0, 0] as [number, number, number], pinAssignments: {} },
+        ],
+        nets: [],
+      }
+      expect(() => generate(project)).toThrowError(CatalogTrustError)
+      expect(() => generate(project)).toThrowError(/draft-sensor/)
+      expect(() => generate(project)).toThrowError(/missing-sensor/)
+    } finally {
+      catalog.removeComponent('draft-sensor')
+    }
+  })
+
   it('always includes freertos and nvs_flash headers', () => {
     const { files } = generate(makeProject())
     expect(files['main/app_main.c']).toContain('#include "freertos/FreeRTOS.h"')
